@@ -219,6 +219,14 @@ class InlineNormalize implements IPhase {
         case 'internal':
           $entry = 'private';
           break;
+        case 'inline': // Not Used in PHP
+          $entry = null;
+          break;
+        case 'deprecated':
+          // TODO Add @deprecated to PHP Doc to signal deprecation
+          // TODO add error or warning (assert like) to show the function has been deprecated
+          $entry = null;
+          break;
         default:
           throw new \Exception("Unhandled method visibility type [{$entry}] in line [{$method['line']}]");
       }
@@ -236,6 +244,8 @@ class InlineNormalize implements IPhase {
     }
 
     $method['visibility'] = $visibility;
+
+    // Process Statements
     $method['statements'] = $this->_processStatementBlock($class, $method, $method['statements']);
     return $method;
   }
@@ -345,7 +355,7 @@ class InlineNormalize implements IPhase {
 
   protected function _statementFunction(&$class, &$method, $function) {
     /* FUNCTION (STATEMENTS) */
-    $function['statements'] = $this->_processStatementBlock($class, $method, $function['statements']);
+    $function['statements'] = $this->_processStatementBlock($class, $function, $function['statements']);
 
     return [null, $function, null];
   }
@@ -1304,10 +1314,22 @@ class InlineNormalize implements IPhase {
   }
 
   protected function _expressionClosureArrow(&$class, &$method, $expression) {
+
+    // Create Function Parameter
+    $parameter = $expression['left'];
+    $parameter['data-type'] = $parameter['type'];
+    $parameter['name'] = $parameter['value'];
+    unset($parameter['value']);
+    $parameter['type'] = 'parameter';
+    $parameter['const'] = 0;
+    $parameter['mandatory'] = 0;
+    $parameter['reference'] = 0;
+
+    // Create Closure Definition
     $closure = [
       'type' => 'closure',
       'call-type' => 1,
-      'parameters' => [$expression['left']],
+      'parameters' => [$parameter],
       'locals' => [],
       'file' => $expression['file'],
       'line' => $expression['line'],
