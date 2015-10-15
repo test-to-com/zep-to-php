@@ -14,5 +14,8 @@ phpinfo.php
 
 # Ignore Specific Files
 
+# If Phalcon Directory symlinked, ignore it to.
+phalcon
+
 # GitEye Specific
 /.project
