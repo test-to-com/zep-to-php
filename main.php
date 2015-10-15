@@ -31,8 +31,8 @@ $di = new DI;
 
 // Initialize the DI
 $di->set("fileSystem", "\ZEPtoPHP\Base\FileSystem\HardDisk", true);
-//$di->setShared('emitter', "\ZEPtoPHP\Emitters\File");
-$di->setShared('emitter', "\ZEPtoPHP\Emitters\Console");
+$di->setShared('emitter', "\ZEPtoPHP\Emitters\File");
+//$di->setShared('emitter', "\ZEPtoPHP\Emitters\Console");
 
 // Define Command Line Options
 $specs = new OptionCollection;
