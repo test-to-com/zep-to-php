@@ -1,0 +1,97 @@
+#!/bin/bash
+
+# --------------------------------------------------------------------------
+# ZEP to PHP Translator                                                    
+# --------------------------------------------------------------------------
+# Copyright (c) 2015 pf at sourcenotes.org                                 
+# --------------------------------------------------------------------------
+# This source file is subject the MIT license, that is bundled with        
+# this package in the file LICENSE, and is available through the           
+# world-wide-web at the following url:                                     
+# https://opensource.org/licenses/MIT                                      
+# --------------------------------------------------------------------------
+
+# Get the Scripts Current Working Directory
+CWD="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+#
+# Validate Base Requirements
+#
+
+type re2c >/dev/null 2>&1
+if [[ $? != 0 ]]; then
+  echo "error: re2c is not installed"
+  exit 1
+fi
+
+# Make Build Output Directory
+BIN="$CWD/bin"
+if [ ! -d "$BIN" ]; then
+  # Create Bin Directory
+  mkdir -p "$BIN"
+fi
+
+# Make Build Output Directory
+ZEPBUILD="$CWD/build/zep-parser"
+if [ ! -d "$ZEPBUILD" ]; then
+  # Create Build Directory
+  mkdir -p "$ZEPBUILD"
+else
+  # clean build directory
+  rm -rf "$ZEPBUILD/*"
+fi
+
+#
+# BUILD ZEP Parser
+#
+
+# Change into ZEP Parser Source Directory
+cd "$CWD/zep-parser"
+
+# Compile lemon
+if [ ! -f "$CWD/bin/lemon" ]; then
+	gcc -w lemon.c -o "$CWD/bin/lemon"
+fi
+
+# Generate Parser
+re2c -o scanner.c scanner.re && "$BIN/lemon" -s parser.lemon && cat base.c >> parser.c
+if [ ! -f parser.c ]; then
+  echo "error: failed to produce parser"
+  exit 2
+fi
+sed s/"\#line"/"\/\/"/g scanner.c > xx && mv -f xx scanner.c
+sed s/"#line"/"\/\/"/g parser.c > xx && mv -f xx parser.c
+
+# Move C File to Build Directory
+cp xx.h "$ZEPBUILD"
+cp scanner.h "$ZEPBUILD"
+mv scanner.c "$ZEPBUILD"
+mv parser.h "$ZEPBUILD"
+mv parser.c "$ZEPBUILD"
+mv parser.out "$ZEPBUILD" 
+
+# Compile Parser
+cd "$ZEPBUILD"
+gcc -Wl,-rpath /usr/local/lib -I/usr/local/include -L/usr/local/lib -L/opt/local/lib -g3 -O0 -w parser.c scanner.c -ljson-c -o "$BIN/zephir-parser"
+
+# Reset Working Directory
+cd "$CWD"
+
+# Using the -c option will copy zephir in /usr/local/bin
+#options='c'
+#while getopts $options option
+#do
+#  if [[ "$option" == "c" ]]; then
+#    ZEPHIRDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+#    sed "s#%ZEPHIRDIR%#$ZEPHIRDIR#g" bin/zephir > bin/zephir-cmd
+#    chmod 755 bin/zephir-cmd
+#    sudo cp bin/zephir-cmd /usr/local/bin/zephir
+#    rm bin/zephir-cmd
+#    exit 0
+#  fi
+#done
+
+
+#if [[ -d "/etc/bash_completion.d/" && $EUID = 0 ]]; then
+#  sudo cp bin/bash_completion /etc/bash_completion.d/zephir
+#fi

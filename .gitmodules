@@ -1,0 +1,9 @@
+[submodule "externals/json-c"]
+	path = externals/json-c
+	url = https://github.com/phalcon/json-c.git
+[submodule "externals/GetOptionKit"]
+	path = externals/GetOptionKit
+	url = https://github.com/c9s/GetOptionKit.git
+[submodule "externals/Kit-ClassLoader"]
+	path = externals/Kit-ClassLoader
+	url = https://github.com/Riimu/Kit-ClassLoader.git

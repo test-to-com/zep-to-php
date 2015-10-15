@@ -1,0 +1,18 @@
+# Ignore Directories
+bin/
+build/
+test/
+phalcon/
+output/
+cache/
+
+# Ignore Special Files
+phpinfo.php
+*~
+*-
+*.bak
+
+# Ignore Specific Files
+
+# GitEye Specific
+/.project
