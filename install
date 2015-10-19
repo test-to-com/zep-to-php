@@ -7,11 +7,10 @@
 # --------------------------------------------------------------------------
 # This source file is subject the MIT license, that is bundled with        
 # this package in the file LICENSE, and is available through the           
-# world-wide-web at the following url:                                     
-# https://opensource.org/licenses/MIT                                      
+# world-wide-web at the following url: https://opensource.org/licenses/MIT                                      
 # --------------------------------------------------------------------------
 
-# Get the Scripts Current Working Directory
+# Get the Scripts Working Directory
 CWD="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 #
@@ -77,21 +76,14 @@ gcc -Wl,-rpath /usr/local/lib -I/usr/local/include -L/usr/local/lib -L/opt/local
 # Reset Working Directory
 cd "$CWD"
 
-# Using the -c option will copy zephir in /usr/local/bin
-#options='c'
-#while getopts $options option
-#do
-#  if [[ "$option" == "c" ]]; then
-#    ZEPHIRDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-#    sed "s#%ZEPHIRDIR%#$ZEPHIRDIR#g" bin/zephir > bin/zephir-cmd
-#    chmod 755 bin/zephir-cmd
-#    sudo cp bin/zephir-cmd /usr/local/bin/zephir
-#    rm bin/zephir-cmd
-#    exit 0
-#  fi
-#done
+# Install to ~/bin
+sed "s#%ZEPTOPHP%#${CWD}#g" ./zeptophp.sh > "${BIN}/zeptophp"
+chmod 755 "${BIN}/zeptophp"
 
+if [ ! -d ~/bin ]; then
+  echo "error: no ~/bin directory"
+  echo "You can still run the command using: ${BIN}/zeptophp"
+  exit 3
+fi
 
-#if [[ -d "/etc/bash_completion.d/" && $EUID = 0 ]]; then
-#  sudo cp bin/bash_completion /etc/bash_completion.d/zephir
-#fi
+ln -s "${BIN}/zeptophp" ~/bin/zeptophp
