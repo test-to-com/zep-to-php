@@ -11,6 +11,7 @@ phpinfo.php
 *~
 *-
 *.bak
+*.log
 
 # Ignore Specific Files
 
