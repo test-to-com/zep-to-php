@@ -16,10 +16,9 @@ CWD="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 #
 # Validate Base Requirements
 #
-
 type re2c >/dev/null 2>&1
 if [[ $? != 0 ]]; then
-  echo "error: re2c is not installed"
+  echo "ERROR: re2c is not installed"
   exit 1
 fi
 
@@ -30,47 +29,48 @@ if [ ! -d "$BIN" ]; then
   mkdir -p "$BIN"
 fi
 
-# Make Build Output Directory
-ZEPBUILD="$CWD/build/zep-parser"
-if [ ! -d "$ZEPBUILD" ]; then
-  # Create Build Directory
-  mkdir -p "$ZEPBUILD"
-else
-  # clean build directory
-  rm -rf "$ZEPBUILD/*"
+# Create/Clean Build Directory
+BUILD="$CWD/build"
+# Does the Build Directory Exist?
+if [ ! -d "${BUILD}" ]; then # NO: Create
+  mkdir -p "${BUILD}"
+else # YES: Clean 
+  cd "${BUILD}"
+  find . -delete
 fi
+
+# Create ZEP Parser Build Directory
+ZEPBUILD="$CWD/build/zep-parser"
+mkdir -p "$ZEPBUILD"
 
 #
 # BUILD ZEP Parser
 #
 
+# ZEPHIR Root
+ZEPHIRROOT="${CWD}/externals/zephir"
+
+# Copy Parser Files
+cp "${ZEPHIRROOT}/parser/"{xx.h,lemon.c,lempar.c,parser.lemon,base.c,scanner.re,scanner.h} "${ZEPBUILD}"
+
 # Change into ZEP Parser Source Directory
-cd "$CWD/zep-parser"
+cd "$ZEPBUILD"
 
 # Compile lemon
-if [ ! -f "$CWD/bin/lemon" ]; then
-	gcc -w lemon.c -o "$CWD/bin/lemon"
-fi
+gcc -w lemon.c -o lemon
 
 # Generate Parser
-re2c -o scanner.c scanner.re && "$BIN/lemon" -s parser.lemon && cat base.c >> parser.c
-if [ ! -f parser.c ]; then
-  echo "error: failed to produce parser"
+re2c -o scanner.c scanner.re && ./lemon -s parser.lemon && cat base.c >> parser.c
+
+# Was parser built?
+if [ ! -f parser.c ]; then # NO
+  echo "ERROR: failed to produce parser"
   exit 2
 fi
 sed s/"\#line"/"\/\/"/g scanner.c > xx && mv -f xx scanner.c
 sed s/"#line"/"\/\/"/g parser.c > xx && mv -f xx parser.c
 
-# Move C File to Build Directory
-cp xx.h "$ZEPBUILD"
-cp scanner.h "$ZEPBUILD"
-mv scanner.c "$ZEPBUILD"
-mv parser.h "$ZEPBUILD"
-mv parser.c "$ZEPBUILD"
-mv parser.out "$ZEPBUILD" 
-
 # Compile Parser
-cd "$ZEPBUILD"
 gcc -Wl,-rpath /usr/local/lib -I/usr/local/include -L/usr/local/lib -L/opt/local/lib -g3 -O0 -w parser.c scanner.c -ljson-c -o "$BIN/zephir-parser"
 
 # Reset Working Directory
@@ -80,10 +80,28 @@ cd "$CWD"
 sed "s#%ZEPTOPHP%#${CWD}#g" ./zeptophp.sh > "${BIN}/zeptophp"
 chmod 755 "${BIN}/zeptophp"
 
-if [ ! -d ~/bin ]; then
-  echo "error: no ~/bin directory"
+# Did we run install?
+if [ ! -d ~/bin ]; then # NO: Display Error
+  echo "ERROR: ~/bin directory does not exist"
   echo "You can still run the command using: ${BIN}/zeptophp"
   exit 3
 fi
 
+# Do we have an existing symlink?
+if [ -f ~/bin/zeptophp ]; then # YES: Remove it
+  rm ~/bin/zeptophp
+fi
+
 ln -s "${BIN}/zeptophp" ~/bin/zeptophp
+
+# Do we want to run a test?
+options='t'
+while getopts $options option
+do
+  if [[ "$option" == "t" ]]; then # YES
+    # Create Output Directories for Run on ZEPHIR test
+    mkdir "${BUILD}/"{cache,tmp,test}
+    zeptophp -c "${BUILD}/cache" -t "${BUILD}/tmp" -o "${BUILD}/test" "${ZEPHIRROOT}/test"
+    exit 0
+  fi
+done

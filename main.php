@@ -17,8 +17,8 @@
 require_once __DIR__ . '/bootstrap.php';
 
 // Include Zephir Extras
-require_once BASEPATH . 'zephir_builtin.php';
-require_once BASEPATH . 'zephir_extras.php';
+require_once BASEPATH . 'zephir-base/zephir_builtin.php';
+require_once BASEPATH . 'zephir-base/zephir_extras.php';
 
 // Include Required Class
 use GetOptionKit\OptionCollection;
