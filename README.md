@@ -49,4 +49,4 @@ then running the translator is as simple as
 zeptophp ...path to extension's zep files...
 ```
 
-If not, then use the _zeptophp_ under the _bin_ directory from which you ran ./install.
+If not, then use the _zeptophp_ under the _bin_ directory from where you ran ./install.
