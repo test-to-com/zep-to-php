@@ -24,7 +24,7 @@ use ZEPtoPHP\Base\Stage as IStage;
  */
 class EmitCode implements IStage {
 
-  const VERSION = '20151008';
+  const VERSION = '20151023';
 
   // Mixins
   use \ZEPtoPHP\Base\Mixins\DI;
