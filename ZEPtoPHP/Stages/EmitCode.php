@@ -1472,6 +1472,11 @@ class EmitCode implements IStage {
         $this->_processExpression($left['right'], $class, $method);
         $this->_emitter->emit(')');
         break;
+      case 'variable':
+        $this->_emitter->emit(['isset', '(']);
+        $this->_processExpression($left, $class, $method);
+        $this->_emitter->emit(')');
+        break;
       default:
         throw new \Exception("TODO - 2 - isset([{$type}]) in line [{$isset['line']}]");
     }

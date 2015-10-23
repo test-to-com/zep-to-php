@@ -1,10 +1,7 @@
 # Ignore Directories
 bin/
 build/
-test/
-phalcon/
-output/
-cache/
+tests/
 
 # Ignore Special Files
 phpinfo.php
@@ -14,6 +11,7 @@ phpinfo.php
 *.log
 
 # Ignore Specific Files
+buildtests
 
 # If Phalcon Directory symlinked, ignore it to.
 phalcon

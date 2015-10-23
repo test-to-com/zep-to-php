@@ -96,7 +96,7 @@ $fs->setCachePath(isset($cache_dir) && is_dir($cache_dir) ? $cache_dir : BASEPAT
 
 $tmp_dir = $result->tmp;
 if (isset($tmp_dir) && is_dir($tmp_dir)) {
-  $fs->setOutputPath($output_dir);
+  $fs->setTempPath($output_dir);
 }
 
 $input_dir = null;
@@ -124,13 +124,16 @@ if (file_exists($input)) {
 
 $fs->initialize();
 
+/*
 echo "Current Working Directory [" . BASEPATH . "]\n";
 echo "Input Directory [{$input_dir}]\n";
 if (isset($input_file)) {
   echo "Input File [{$input_file}]\n";
 }
 echo "Output Directory [{$output_dir}]\n";
+echo "Cache Directory [{$cache_dir}]\n";
 echo "Temporary Directory [{$tmp_dir}]\n";
+*/
 
 $di->set("compiler", "\ZEPtoPHP\Compiler", true);
 $di->set("compiler-stages", function() {

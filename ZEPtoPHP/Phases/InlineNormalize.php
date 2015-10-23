@@ -591,29 +591,8 @@ class InlineNormalize implements IPhase {
   }
 
   protected function _statementFetch(&$class, &$method, $fetch) {
-    // Convert fetch statement to if statement and process that
-    $if = [
-      'type' => 'if',
-      'expr' => $fetch['expr'],
-      'file' => $fetch['file'],
-      'line' => $fetch['line'],
-      'char' => $fetch['char'],
-    ];
-
-    /* TODO
-     * This solution works, BUT, it also should be possible to solve this
-     * as terniary statement instead...
-     * Verify which solution is best:
-     * example code: phalcon->http/request.zep
-     * fetch address, _SERVER["HTTP_X_FORWARDED_FOR"];
-     * if address === null {
-     * 	  	fetch address, _SERVER["HTTP_CLIENT_IP"];
-     * }
-     * 
-     * doing: address = isset _SERVER["HTTP_X_FORWARDED_FOR"] ? _SERVER["HTTP_X_FORWARDED_FOR"] : null;
-     * should also work!?
-     */
-    return $this->_statementIf($class, $method, $if);
+    // Process the Fetch Expression (Which Contains the Real Information)
+    return $this->_expressionFetch($class, $method, $fetch['expr']);
   }
 
   protected function _statementIf(&$class, &$method, $statement) {
@@ -626,62 +605,23 @@ class InlineNormalize implements IPhase {
 
     /* IF (EXPR) */
     $expression = $statement['expr'];
+    $fetch = $expression['type'] === 'fetch' ? $expression : null;
 
-    // Is the Next Expression a not?
-    $not = $expression['type'] === 'not';
-
-    $fetch = null;
-    if ($not && ($expression['left']['type'] === 'fetch')) {
-      $fetch = ($expression['left']['type'] === 'fetch') ? $expression['left'] : null;
-    } else if ($expression['type'] === 'fetch') {
-      $fetch = $expression;
-    }
-
-    // Are we Dealing with Fetch Expression
+    // Are we dealing with a TOP LEVEL fetch?
     if (isset($fetch)) { // YES
       /* FETCH STATEMENTS ARE PROCESSED in 2 STAGES
-       * 1. An Assignment Statement is added to a statement block
-       * a) if fetch, assigment is added to if,
-       * b) if !fetch, assignment is added to else
-       * 2. Fetch is replaced by an isset() test...
+       * 1. Fetch Expression is Converted to a Let / Ternary Statement to be added before the if.
+       * 2. Fetch expression is replaced with a simple comparison
        */
-      // Create Assignment Statement
-      $let = [
-        'type' => 'let',
-        'assignments' =>
-        [
-          [
-            'assign-type' => 'variable',
-            'operator' => 'assign',
-            // EXPECTED = $expression['left']['type'] === 'variable'!??
-            'variable' => $fetch['left']['value'],
-            'expr' => $fetch['right'],
-            'file' => $fetch['file'],
-            'line' => $fetch['line'],
-            'char' => $fetch['char'],
-          ],
-        ],
-        'file' => $fetch['file'],
-        'line' => $fetch['line'],
-        'char' => $fetch['char'],
-      ];
 
-      if ($not) {
-        if (isset($statement['else_statements'])) {
-          array_unshift($statement['statements'], $let);
-        } else {
-          $statement['else_statements'] = [ $let];
-        }
-      } else {
-        if (count($statement['statements']) >= 1) {
-          array_unshift($statement['statements'], $let);
-        } else {
-          $statement['statements'][] = $let;
-        }
-      }
+      /* STAGE 1 */
+      list($before, $expression, $after) = $this->_expressionFetch($class, $method, $fetch);
+
+      /* STAGE 2 */
+      $expression = $this->_fetchToComparison($fetch);
     }
 
-    list($prepend, $expression, $append) = $this->_processExpression($class, $method, $statement['expr']);
+    list($prepend, $expression, $append) = $this->_processExpression($class, $method, $expression);
     if (isset($prepend) && count($prepend)) {
       $before = array_merge($before, $prepend);
     }
@@ -1364,39 +1304,142 @@ class InlineNormalize implements IPhase {
   }
 
   protected function _expressionFetch(&$class, &$method, $fetch) {
-    $before = [];
-    $after = [];
+    // Extract Fetch Components
+    $variable = $fetch['left'];
+    $from = $fetch['right'];
 
-    /* TODO: Optimization
-     * The following code (taken from: phalcon\annotations\adapter\memory.zep)
-      if fetch data, this->_data[strtolower(key)] {
-      return data;
-      }
-     * can be further optimized.
-     * this get converted to 
-     * if(zephir_isset($this->_data, strtolower($key)) {
-     *   $data = $this->_data[strtolower($key)];
-     *   return $data;
-     * }
-     * 
-     * Notice that 2 calls are made to strtolower($key). 
-     * IF we used a temporary variable to store the result of strtolower($key)
-     * we could save a function call.
+    /* Replace the fecth statement with a let / ternary / isset combination
+     * ex:
+     *   fetch value, a["value"]
+     * becomes
+     *   let value = isset a["value"] ? a["value"] : null;
      */
-
-    // Process Right Expression
-    list($before, $left, $after) = $this->_processExpression($class, $method, $fetch['right']);
-
-    // Replace Fetch with isset(....)
-    $expression = [
-      'type' => 'isset',
-      'left' => $left,
-      'file' => $fetch['file'],
-      'line' => $fetch['line'],
-      'char' => $fetch['char'],
+    $let = [
+      'type' => 'let',
+      'assignments' => [
+        [
+          'assign-type' => 'variable',
+          'operator' => 'assign',
+          'variable' => $variable['value'],
+          'expr' => [
+            'type' => 'ternary',
+            'left' =>
+            [
+              'type' => 'isset',
+              'left' => $from
+            ],
+            'right' => $from,
+            'extra' => [
+              'type' => 'null',
+              'file' => $fetch['file'],
+              'line' => $fetch['line'],
+              'char' => $fetch['char'],
+            ],
+          ],
+          'file' => $variable['file'],
+          'line' => $variable['line'],
+          'char' => $variable['char'],
+        ],
+      ],
     ];
 
-    return [$before, $expression, $after];
+    /* TODO
+     * This solution works, BUT, it also should be possible to solve this
+     * as terniary statement instead...
+     * Verify which solution is best:
+     * example code: phalcon->http/request.zep
+     * fetch address, _SERVER["HTTP_X_FORWARDED_FOR"];
+     * if address === null {
+     * 	  	fetch address, _SERVER["HTTP_CLIENT_IP"];
+     * }
+     * 
+     * doing: address = isset _SERVER["HTTP_X_FORWARDED_FOR"] ? _SERVER["HTTP_X_FORWARDED_FOR"] : null;
+     * should also work!?
+     */
+    return $this->_statementLet($class, $method, $let);
+  }
+
+  protected function _expressionNot(&$class, &$method, $not) {
+    $left = $not['left'];
+
+    if ($left['type'] === 'fetch') {
+      $fetch = $left;
+      /* FETCH STATEMENTS ARE PROCESSED in 2 STAGES
+       * 1. Fetch Expression is Converted to a Let / Ternary Statement to be added before the if.
+       * 2. Fetch expression is replaced with a simple comparison
+       */
+
+      /* STAGE 1 */
+      list($before, $expression, $after) = $this->_expressionFetch($class, $method, $fetch);
+
+      /* STAGE 2 */
+      $not = $this->_fetchToComparison($fetch);
+
+      // Test is always $variable != null, therefore we convert to $variable == null
+      $not['type'] = 'equals';
+    } else {
+      list($before, $expression, $after) = $this->_processExpression($class, $method, $left);
+      $not['left'] = $expression;
+    }
+
+    return [$before, $not, $after];
+  }
+
+  protected function _expressionAnd(&$class, &$method, $and) {
+    $left = $and['left'];
+    $right = $and['right'];
+
+    if ($left['type'] === 'fetch') {
+      $fetch = $left;
+      /* FETCH STATEMENTS ARE PROCESSED in 2 STAGES
+       * 1. Fetch Expression is Converted to a Let / Ternary Statement to be added before the if.
+       * 2. Fetch expression is replaced with a simple comparison
+       */
+
+      /* STAGE 1 */
+      list($before, $expression, $after) = $this->_expressionFetch($class, $method, $fetch);
+
+      /* STAGE 2 */
+      $and['left'] = $this->_fetchToComparison($fetch);
+    } else {
+      list($before, $expression, $after) = $this->_processExpression($class, $method, $left);
+      $and['left'] = $expression;
+    }
+
+    if ($right['type'] === 'fetch') {
+      $fetch = $right;
+      /* FETCH STATEMENTS ARE PROCESSED in 2 STAGES
+       * 1. Fetch Expression is Converted to a Let / Ternary Statement to be added before the if.
+       * 2. Fetch expression is replaced with a simple comparison
+       */
+
+      /* STAGE 1 */
+      list($prepend, $right, $append) = $this->_expressionFetch($class, $method, $fetch);
+      if (isset($prepend) && count($prepend)) {
+        $before = array_merge($before, $prepend);
+      }
+      if (isset($append) && count($append)) {
+        $after = array_merge($after, $append);
+      }
+
+      /* STAGE 2 */
+      $and['right'] = $this->_fetchToComparison($fetch);
+    } else {
+      list($before, $expression, $after) = $this->_processExpression($class, $method, $right);
+      if (isset($prepend) && count($prepend)) {
+        $before = array_merge($before, $prepend);
+      }
+      $and['right'] = $expression;
+      if (isset($append) && count($append)) {
+        $after = array_merge($after, $append);
+      }
+    }
+
+    return [$before, $and, $after];
+  }
+
+  protected function _expressionOr(&$class, &$method, $or) {
+    return $this->_expressionAnd($class, $method, $or);
   }
 
   protected function _expressionEmpty(&$class, &$method, $empty) {
@@ -1569,93 +1612,6 @@ class InlineNormalize implements IPhase {
     return [$before, $expression, $after];
   }
 
-  protected function _nextLocalVarName($method, $datatype) {
-    // Can we handle the Variable Type
-    switch ($datatype) {
-      case 'array':
-        $v_prefix = '__t_a_';
-        break;
-      case 'bool':
-        $v_prefix = '__t_b_';
-        break;
-      case 'double':
-        $v_prefix = '__t_d_';
-        break;
-      case 'int':
-        $v_prefix = '__t_i_';
-        break;
-      case 'char':
-        $v_prefix = '__t_c_';
-        break;
-      case 'string':
-        $v_prefix = '__t_s_';
-        break;
-      case 'variable':
-        $v_prefix = '__t_v_';
-        break;
-      default:
-        throw new \Exception("Can't Create Local Variable of type [{$datatype}]");
-    }
-
-    // Find a Valid Local Variable Name
-    $i = 1;
-    $locals = $method['locals'];
-    do {
-      $v_name = "{$v_prefix}{$i}";
-      if (!array_key_exists($v_name, $locals)) {
-        break;
-      }
-      $i++;
-    } while (true);
-
-    return $v_name;
-  }
-
-  protected function _getLocalVariable($method, $name) {
-    return isset($method['locals'][$name]) ? $method['locals'][$name] : null;
-  }
-
-  protected function _registerLocalVariable(&$method, $variable) {
-    $v_name = $variable['value'];
-
-    // Add Variable to Method Locals
-    $method['locals'][$v_name] = $variable;
-  }
-
-  protected function _newLocalVariable(&$method, $datatype, $file = null, $line = null, $char = null) {
-    $v_name = $this->_nextLocalVarName($method, $datatype);
-    // Add Variable to Method Locals
-    $this->_registerLocalVariable($method, $this->_builtSimpleVariable($v_name, $datatype, $file, $line, $char));
-    return $v_name;
-  }
-
-  protected function _builtSimpleVariable($name, $datatype, $file = null, $line = null, $char = null) {
-    return [
-      'value' => $name,
-      'data-type' => $datatype,
-      'file' => $file,
-      'line' => $line,
-      'char' => $char
-    ];
-  }
-
-  protected function _newAssignment($class, $method, $v_name, $expression) {
-    // Create Assignment Statement
-    $assignment = [
-      'type' => 'assign',
-      'operator' => 'assign',
-      'assign-type' => 'variable',
-      'assign-to-type' => 'variable',
-      'variable' => $v_name,
-      'expr' => $expression,
-      'file' => $expression['file'],
-      'line' => $expression['line'],
-      'char' => $expression['char']
-    ];
-
-    return $assignment;
-  }
-
   protected function _expressionTernary(&$class, &$method, $ternary) {
     $before = [];
     $after = [];
@@ -1774,6 +1730,93 @@ class InlineNormalize implements IPhase {
     ];
 
     return [null, $function, null];
+  }
+
+  protected function _nextLocalVarName($method, $datatype) {
+    // Can we handle the Variable Type
+    switch ($datatype) {
+      case 'array':
+        $v_prefix = '__t_a_';
+        break;
+      case 'bool':
+        $v_prefix = '__t_b_';
+        break;
+      case 'double':
+        $v_prefix = '__t_d_';
+        break;
+      case 'int':
+        $v_prefix = '__t_i_';
+        break;
+      case 'char':
+        $v_prefix = '__t_c_';
+        break;
+      case 'string':
+        $v_prefix = '__t_s_';
+        break;
+      case 'variable':
+        $v_prefix = '__t_v_';
+        break;
+      default:
+        throw new \Exception("Can't Create Local Variable of type [{$datatype}]");
+    }
+
+    // Find a Valid Local Variable Name
+    $i = 1;
+    $locals = $method['locals'];
+    do {
+      $v_name = "{$v_prefix}{$i}";
+      if (!array_key_exists($v_name, $locals)) {
+        break;
+      }
+      $i++;
+    } while (true);
+
+    return $v_name;
+  }
+
+  protected function _getLocalVariable($method, $name) {
+    return isset($method['locals'][$name]) ? $method['locals'][$name] : null;
+  }
+
+  protected function _registerLocalVariable(&$method, $variable) {
+    $v_name = $variable['value'];
+
+    // Add Variable to Method Locals
+    $method['locals'][$v_name] = $variable;
+  }
+
+  protected function _newLocalVariable(&$method, $datatype, $file = null, $line = null, $char = null) {
+    $v_name = $this->_nextLocalVarName($method, $datatype);
+    // Add Variable to Method Locals
+    $this->_registerLocalVariable($method, $this->_builtSimpleVariable($v_name, $datatype, $file, $line, $char));
+    return $v_name;
+  }
+
+  protected function _builtSimpleVariable($name, $datatype, $file = null, $line = null, $char = null) {
+    return [
+      'value' => $name,
+      'data-type' => $datatype,
+      'file' => $file,
+      'line' => $line,
+      'char' => $char
+    ];
+  }
+
+  protected function _newAssignment($class, $method, $v_name, $expression) {
+    // Create Assignment Statement
+    $assignment = [
+      'type' => 'assign',
+      'operator' => 'assign',
+      'assign-type' => 'variable',
+      'assign-to-type' => 'variable',
+      'variable' => $v_name,
+      'expr' => $expression,
+      'file' => $expression['file'],
+      'line' => $expression['line'],
+      'char' => $expression['char']
+    ];
+
+    return $assignment;
   }
 
   protected function _expandArrayJoin(&$class, &$method, $expression) {
@@ -2465,6 +2508,31 @@ class InlineNormalize implements IPhase {
     ];
 
     return [null, $function, null];
+  }
+
+  protected function _fetchToComparison($fetch) {
+    $variable=$fetch['left'];
+    return [
+      'type' => 'not-equals',
+      'left' =>
+      [
+        'type' => 'variable',
+        'value' => $variable['value'],
+        'file' => $variable['file'],
+        'line' => $variable['line'],
+        'char' => $variable['char'],
+      ],
+      'right' =>
+      [
+        'type' => 'null',
+        'file' => $fetch['file'],
+        'line' => $fetch['line'],
+        'char' => $fetch['char'],
+      ],
+      'file' => $fetch['file'],
+      'line' => $fetch['line'],
+      'char' => $fetch['char'],
+    ];
   }
 
   protected function _isValidSudoObjectFunction($otype, $fname) {
