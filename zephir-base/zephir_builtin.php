@@ -17,6 +17,12 @@
  * Zephir Compiler Functions
  */
 
+/**
+ * 
+ * @param type $object
+ * @param type $property
+ * @return type
+ */
 function zephir_read_property($object, $property) {
   /* TODO Improve Handling 
    * i.e. if $object is not an object -  "Trying to get property \"%s\" of non-object"
@@ -28,6 +34,13 @@ function zephir_read_property($object, $property) {
   }
 }
 
+/**
+ * 
+ * @param type $array
+ * @param type $index
+ * @return boolean
+ * @throws \Exception
+ */
 function zephir_isset_array($array, $index) {
   if (isset($array) && isset($index)) {
     switch (gettype($index)) {
@@ -45,16 +58,56 @@ function zephir_isset_array($array, $index) {
         throw new \Exception('Illegal offset type');
     }
   }
-  return false;
+  return FALSE;
 }
 
+/**
+ * 
+ * @param type $result
+ * @param type $array
+ * @param type $index
+ * @return boolean
+ */
+function zephir_fetch_array(&$result, $array, $index) {
+  if (zephir_isset_array($array, $index)) {
+    $result = $array[$index];
+    return TRUE;
+  }
+
+  return FALSE;
+}
+
+/**
+ * 
+ * @param type $object
+ * @param type $property
+ * @return boolean
+ */
 function zephir_isset_property($object, $property) {
   if (isset($object) && isset($property)) {
     if (is_object($object) && is_string($property)) {
       return property_exists($object, $property);
     }
   }
-  return false;
+
+  return FALSE;
+}
+
+
+/**
+ * 
+ * @param type $result
+ * @param type $object
+ * @param type $property
+ * @return boolean
+ */
+function zephir_fetch_property(&$result, $object, $property) {
+  if (zephir_isset_property($object, $property)) {
+    $result = $object->$property;
+    return TRUE;
+  }
+
+  return FALSE;
 }
 
 /**
@@ -132,7 +185,7 @@ function zephir_camelize($str) {
   if (!isset($str) || !is_string($str)) {
     throw new \Exception("Invalid arguments supplied for zephir_camelize()");
   }
-  
+
   $camilized = implode(array_map('ucfirst', explode('-', $str)));
   $camilized = implode(array_map('ucfirst', explode('_', $str)));
   return $camilized;

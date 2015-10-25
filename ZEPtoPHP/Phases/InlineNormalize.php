@@ -281,7 +281,7 @@ class InlineNormalize implements IPhase {
     $type = $statement['type'];
 
     // Do we have Specific Handler?
-    $handler = $this->_handlerName("_statement", ucfirst($type));
+    $handler = $this->_handlerName("_statement", $type);
     if (method_exists($this, $handler)) { // YES: Use it!
       return $this->$handler($class, $method, $statement);
     } else { // NO: Try Default
@@ -591,8 +591,52 @@ class InlineNormalize implements IPhase {
   }
 
   protected function _statementFetch(&$class, &$method, $fetch) {
-    // Process the Fetch Expression (Which Contains the Real Information)
-    return $this->_expressionFetch($class, $method, $fetch['expr']);
+    // Get Fetch Expression
+    $fetch = $fetch['expr'];
+
+    // Extract Fetch Components
+    $variable = $fetch['left'];
+    $from = $fetch['right'];
+
+    /* Replace the fecth statement with a let / ternary / isset combination
+     * ex:
+     *   fetch value, a["value"]
+     * becomes
+     *   let value = isset a["value"] ? a["value"] : null;
+     */
+    $let = [
+      'type' => 'let',
+      'assignments' => [
+        [
+          'assign-type' => 'variable',
+          'operator' => 'assign',
+          'variable' => $variable['value'],
+          'expr' => [
+            'type' => 'ternary',
+            'left' =>
+            [
+              'type' => 'isset',
+              'left' => $from,
+              'file' => $from['file'],
+              'line' => $from['line'],
+              'char' => $from['char'],
+            ],
+            'right' => $from,
+            'extra' => [
+              'type' => 'null',
+              'file' => $fetch['file'],
+              'line' => $fetch['line'],
+              'char' => $fetch['char'],
+            ],
+          ],
+          'file' => $variable['file'],
+          'line' => $variable['line'],
+          'char' => $variable['char'],
+        ],
+      ],
+    ];
+
+    return $this->_statementLet($class, $method, $let);
   }
 
   protected function _statementIf(&$class, &$method, $statement) {
@@ -605,22 +649,6 @@ class InlineNormalize implements IPhase {
 
     /* IF (EXPR) */
     $expression = $statement['expr'];
-    $fetch = $expression['type'] === 'fetch' ? $expression : null;
-
-    // Are we dealing with a TOP LEVEL fetch?
-    if (isset($fetch)) { // YES
-      /* FETCH STATEMENTS ARE PROCESSED in 2 STAGES
-       * 1. Fetch Expression is Converted to a Let / Ternary Statement to be added before the if.
-       * 2. Fetch expression is replaced with a simple comparison
-       */
-
-      /* STAGE 1 */
-      list($before, $expression, $after) = $this->_expressionFetch($class, $method, $fetch);
-
-      /* STAGE 2 */
-      $expression = $this->_fetchToComparison($fetch);
-    }
-
     list($prepend, $expression, $append) = $this->_processExpression($class, $method, $expression);
     if (isset($prepend) && count($prepend)) {
       $before = array_merge($before, $prepend);
@@ -874,6 +902,18 @@ class InlineNormalize implements IPhase {
     return [$before, $assign, $after];
   }
 
+  protected function _statementUnset(&$class, &$method, $unset) {
+    // Process unset 'left' expression before using
+    list($before, $expression, $after) = $this->_processExpression($class, $method, $unset['expr']);
+
+    // Was the developer using the unset like a function i.e. unset(...) rather than unset ...?
+    if ($expression['type'] === 'list') { // YES: Remove the list
+      $expression = $expression['left'];
+    }
+    $unset['expr'] = $expression;
+    return [$before, $unset, $after];
+  }
+
   protected function _statementReturn(&$class, &$method, $return) {
     // Are we dealing with an empty return (i.e. return;)?
     if (isset($return['expr'])) { // NO
@@ -939,7 +979,7 @@ class InlineNormalize implements IPhase {
     $type = $expression['type'];
 
     // Do we have Specific Handler?
-    $handler = $this->_handlerName("_expression", ucfirst($type));
+    $handler = $this->_handlerName("_expression", $type);
     if (method_exists($this, $handler)) { // YES: Use it!
       return $this->$handler($class, $method, $expression);
     } else { // NO: Try Default
@@ -1303,143 +1343,169 @@ class InlineNormalize implements IPhase {
     return [null, $closure, null];
   }
 
-  protected function _expressionFetch(&$class, &$method, $fetch) {
-    // Extract Fetch Components
-    $variable = $fetch['left'];
-    $from = $fetch['right'];
+  protected function _fetchArrayAccess(&$class, &$method, $fetch) {
 
-    /* Replace the fecth statement with a let / ternary / isset combination
-     * ex:
-     *   fetch value, a["value"]
-     * becomes
-     *   let value = isset a["value"] ? a["value"] : null;
-     */
-    $let = [
-      'type' => 'let',
-      'assignments' => [
-        [
-          'assign-type' => 'variable',
-          'operator' => 'assign',
-          'variable' => $variable['value'],
-          'expr' => [
-            'type' => 'ternary',
-            'left' =>
-            [
-              'type' => 'isset',
-              'left' => $from
-            ],
-            'right' => $from,
-            'extra' => [
-              'type' => 'null',
-              'file' => $fetch['file'],
-              'line' => $fetch['line'],
-              'char' => $fetch['char'],
-            ],
-          ],
-          'file' => $variable['file'],
-          'line' => $variable['line'],
-          'char' => $variable['char'],
-        ],
-      ],
+    // Expression for Property Name
+    $propname = $fetch['right']['right'];
+
+    // Convert Fetch to Function Call    
+    $fcall = [
+      'type' => 'fcall',
+      'name' => 'zephir_fetch_array',
+      'call-type' => 1,
+      'parameters' => [$fetch['left'], $fetch['right']['left'], $propname],
+      'file' => $fetch['file'],
+      'line' => $fetch['line'],
+      'char' => $fetch['char']
     ];
 
-    /* TODO
-     * This solution works, BUT, it also should be possible to solve this
-     * as terniary statement instead...
-     * Verify which solution is best:
-     * example code: phalcon->http/request.zep
-     * fetch address, _SERVER["HTTP_X_FORWARDED_FOR"];
-     * if address === null {
-     * 	  	fetch address, _SERVER["HTTP_CLIENT_IP"];
-     * }
-     * 
-     * doing: address = isset _SERVER["HTTP_X_FORWARDED_FOR"] ? _SERVER["HTTP_X_FORWARDED_FOR"] : null;
-     * should also work!?
-     */
-    return $this->_statementLet($class, $method, $let);
+    return [null, $fcall, null];
   }
 
-  protected function _expressionNot(&$class, &$method, $not) {
-    $left = $not['left'];
+  protected function _fetchPropertyAccess(&$class, &$method, $fetch) {
+    // Property Name
+    $propname = $fetch['right']['right'];
+    $propname['type'] = 'string';
 
-    if ($left['type'] === 'fetch') {
-      $fetch = $left;
-      /* FETCH STATEMENTS ARE PROCESSED in 2 STAGES
-       * 1. Fetch Expression is Converted to a Let / Ternary Statement to be added before the if.
-       * 2. Fetch expression is replaced with a simple comparison
-       */
+    // Convert Fetch to Function Call    
+    $fcall = [
+      'type' => 'fcall',
+      'name' => 'zephir_fetch_property',
+      'call-type' => 1,
+      'parameters' => [$fetch['left'], $fetch['right']['left'], $propname],
+      'file' => $fetch['file'],
+      'line' => $fetch['line'],
+      'char' => $fetch['char']
+    ];
 
-      /* STAGE 1 */
-      list($before, $expression, $after) = $this->_expressionFetch($class, $method, $fetch);
-
-      /* STAGE 2 */
-      $not = $this->_fetchToComparison($fetch);
-
-      // Test is always $variable != null, therefore we convert to $variable == null
-      $not['type'] = 'equals';
-    } else {
-      list($before, $expression, $after) = $this->_processExpression($class, $method, $left);
-      $not['left'] = $expression;
-    }
-
-    return [$before, $not, $after];
+    return [null, $fcall, null];
   }
 
-  protected function _expressionAnd(&$class, &$method, $and) {
-    $left = $and['left'];
-    $right = $and['right'];
+  protected function _fetchPropertyDynamicAccess(&$class, &$method, $fetch) {
+    // Convert Fetch to Function Call    
+    $fcall = [
+      'type' => 'fcall',
+      'name' => 'zephir_fetch_property',
+      'call-type' => 1,
+      'parameters' => [$fetch['left'], $fetch['right']['left'], $fetch['right']['right']],
+      'file' => $fetch['file'],
+      'line' => $fetch['line'],
+      'char' => $fetch['char']
+    ];
 
-    if ($left['type'] === 'fetch') {
-      $fetch = $left;
-      /* FETCH STATEMENTS ARE PROCESSED in 2 STAGES
-       * 1. Fetch Expression is Converted to a Let / Ternary Statement to be added before the if.
-       * 2. Fetch expression is replaced with a simple comparison
-       */
+    return [null, $fcall, null];
+  }
 
-      /* STAGE 1 */
-      list($before, $expression, $after) = $this->_expressionFetch($class, $method, $fetch);
+  protected function _fetchPropertyStringAccess(&$class, &$method, $fetch) {
+    return $this->_fetchPropertyDynamicAccess($class, $method, $fetch);
+  }
 
-      /* STAGE 2 */
-      $and['left'] = $this->_fetchToComparison($fetch);
-    } else {
-      list($before, $expression, $after) = $this->_processExpression($class, $method, $left);
-      $and['left'] = $expression;
+  protected function _expressionFetch(&$class, &$method, $fetch) {
+    // Process fetch 'right' expression before using
+    list($before, $right, $after) = $this->_processExpression($class, $method, $fetch['right']);
+    $fetch['right'] = $right;
+
+    // Do we have Specific Handler?
+    $type = $right['type'];
+    $handler = $this->_handlerName("_fetch", $type);
+    if (!method_exists($this, $handler)) { // NO: Unhandled Fetch Option
+      throw new \Exception("Cannot use this expression for \"fetch\" operators: ${type}");
+    }
+    // ELSE: Yes - Use Handler to Convert Fetch
+    list($prepend, $fetch, $append) = $this->$handler($class, $method, $fetch);
+    if (isset($prepend) && count($prepend)) {
+      $before = array_merge($before, $prepend);
+    }
+    if (isset($append) && count($append)) {
+      $after = array_merge($after, $append);
     }
 
-    if ($right['type'] === 'fetch') {
-      $fetch = $right;
-      /* FETCH STATEMENTS ARE PROCESSED in 2 STAGES
-       * 1. Fetch Expression is Converted to a Let / Ternary Statement to be added before the if.
-       * 2. Fetch expression is replaced with a simple comparison
-       */
+    return [$before, $fetch, $after];
+  }
 
-      /* STAGE 1 */
-      list($prepend, $right, $append) = $this->_expressionFetch($class, $method, $fetch);
+  protected function _issetArrayAccess(&$class, &$method, $isset) {
+    // Expression for Property Name
+    $propname = $isset['left']['right'];
+
+    // Convert Fetch to Function Call    
+    $fcall = [
+      'type' => 'fcall',
+      'name' => 'zephir_isset_array',
+      'call-type' => 1,
+      'parameters' => [$isset['left']['left'], $propname],
+      'file' => $isset['file'],
+      'line' => $isset['line'],
+      'char' => $isset['char']
+    ];
+
+    return [null, $fcall, null];
+  }
+
+  protected function _issetPropertyAccess(&$class, &$method, $isset) {
+    // Property Name
+    $propname = $isset['left']['right'];
+    $propname['type'] = 'string';
+
+    // Convert Fetch to Function Call    
+    $fcall = [
+      'type' => 'fcall',
+      'name' => 'zephir_isset_property',
+      'call-type' => 1,
+      'parameters' => [$isset['left']['left'], $propname],
+      'file' => $isset['file'],
+      'line' => $isset['line'],
+      'char' => $isset['char']
+    ];
+
+    return [null, $fcall, null];
+  }
+
+  protected function _issetPropertyStringAccess(&$class, &$method, $isset) {
+    return $this->_issetPropertyAccess($class, $method, $isset);
+  }
+
+  protected function _issetPropertyDynamicAccess(&$class, &$method, $isset) {
+    // Property Name
+    $propname = $isset['left']['right'];
+
+    // Convert Fetch to Function Call    
+    $fcall = [
+      'type' => 'fcall',
+      'name' => 'zephir_isset_property',
+      'call-type' => 1,
+      'parameters' => [$isset['left']['left'], $propname],
+      'file' => $isset['file'],
+      'line' => $isset['line'],
+      'char' => $isset['char']
+    ];
+
+    return [null, $fcall, null];
+  }
+
+  protected function _expressionIsset(&$class, &$method, $isset) {
+    // Process isset 'left' expression before using
+    list($before, $left, $after) = $this->_processExpression($class, $method, $isset['left']);
+
+    // Was the developer using the isset like a function i.e. isset(...) rather than isset ...?
+    if ($left['type'] === 'list') { // YES: Remove the list
+      $left = $left['left'];
+    }
+    $isset['left'] = $left;
+
+    // Do we have Specific Handler?
+    $handler = $this->_handlerName("_isset", $left['type']);
+    if (method_exists($this, $handler)) { // YES: Process the Expression
+      list($prepend, $isset, $append) = $this->$handler($class, $method, $isset);
       if (isset($prepend) && count($prepend)) {
         $before = array_merge($before, $prepend);
       }
       if (isset($append) && count($append)) {
         $after = array_merge($after, $append);
       }
-
-      /* STAGE 2 */
-      $and['right'] = $this->_fetchToComparison($fetch);
-    } else {
-      list($before, $expression, $after) = $this->_processExpression($class, $method, $right);
-      if (isset($prepend) && count($prepend)) {
-        $before = array_merge($before, $prepend);
-      }
-      $and['right'] = $expression;
-      if (isset($append) && count($append)) {
-        $after = array_merge($after, $append);
-      }
     }
+    // ELSE: No - Just Simply Pass on the isset to the Emitter
 
-    return [$before, $and, $after];
-  }
-
-  protected function _expressionOr(&$class, &$method, $or) {
-    return $this->_expressionAnd($class, $method, $or);
+    return [$before, $isset, $after];
   }
 
   protected function _expressionEmpty(&$class, &$method, $empty) {
@@ -1469,22 +1535,17 @@ class InlineNormalize implements IPhase {
   }
 
   protected function _expressionList(&$class, &$method, $list) {
-    $before = [];
-    $after = [];
+    // 1st Process Expression (left and right)
+    list($before, $left, $after) = $this->_processExpression($class, $method, $list['left']);
 
-    // Compact List Expression
-    $left = $list['left'];
-    if (isset($left['type'])) {
-      // Are we dealing with concat operation?
-      if ($left['type'] !== 'concat') {
-        list($prepend, $list, $append) = $this->_processExpression($class, $method, $left);
-      }
-      /* TODO: Improve Handling of Expression and Return types so as to be
-       * able to apply sudo-object methods globally
-       * ex: stringmethods.zep -> return ("hello" . "hello")->length();
-       */
-    } else {
-      throw new \Exception("Unexpected List Expression in line [{$assign['line']}]");
+    // Handle Special Cases in which it's mandatory / preferrable to unwrap list
+    switch ($left['type']) {
+      case 'concat':
+      case 'property-access':
+        $list = $left;
+        break;
+      default:
+        $list['left'] = $left;
     }
 
     return [$before, $list, $after];
@@ -2511,9 +2572,9 @@ class InlineNormalize implements IPhase {
   }
 
   protected function _fetchToComparison($fetch) {
-    $variable=$fetch['left'];
+    $variable = $fetch['left'];
     return [
-      'type' => 'not-equals',
+      'type' => 'not-identical',
       'left' =>
       [
         'type' => 'variable',

@@ -24,7 +24,7 @@ use ZEPtoPHP\Base\Stage as IStage;
  */
 class EmitCode implements IStage {
 
-  const VERSION = '20151023';
+  const VERSION = '20151025';
 
   // Mixins
   use \ZEPtoPHP\Base\Mixins\DI;
@@ -1350,7 +1350,11 @@ class EmitCode implements IStage {
     $this->_variable = true;
     $this->_processExpression($call['variable']);
     $this->_variable = false;
-    $this->_emitter->emit(['->', $call['name'], '(']);
+    if ($call['call-type'] === 2) {
+      $this->_emitter->emit(['->', "\${$call['name']}", '(']);
+    } else {
+      $this->_emitter->emit(['->', $call['name'], '(']);
+    }
     if (count($call['parameters'])) {
       $first = true;
       foreach ($call['parameters'] as $parameter) {
@@ -1401,7 +1405,7 @@ class EmitCode implements IStage {
     } else { // YES
       $this->_emitter->emit(['new', $new['class']]);
     }
-    
+
     if (isset($new['parameters'])) {
       $this->_emitter->emit('(');
 
@@ -1433,36 +1437,6 @@ class EmitCode implements IStage {
   protected function _expressionIsset($isset, $class, $method) {
     $left = $isset['left'];
     switch ($left['type']) {
-      case 'array-access':
-        $this->_emitter->emit(['zephir_isset_array', '(']);
-        $this->_processExpression($left['left'], $class, $method);
-        $this->_emitter->emit(',');
-        $this->_processExpression($left['right'], $class, $method);
-        $this->_emitter->emit(')');
-        break;
-      case 'property-access':
-      case 'property-string-access':
-        $this->_emitter->emit(['zephir_isset_property', '(']);
-        $this->_processExpression($left['left'], $class, $method);
-        $this->_emitter->emit(',');
-        $right = $left['right'];
-        switch ($right['type']) {
-          case 'variable':
-          case 'string':
-            $this->_emitter->emit("'{$right['value']}'");
-            break;
-          default:
-            throw new \Exception("TODO - 1 - isset([{$right['type']}])");
-        }
-        $this->_emitter->emit(')');
-        break;
-      case 'property-dynamic-access':
-        $this->_emitter->emit(['zephir_isset_property', '(']);
-        $this->_processExpression($left['left'], $class, $method);
-        $this->_emitter->emit(',');
-        $this->_processExpression($left['right'], $class, $method);
-        $this->_emitter->emit(')');
-        break;
       case 'static-property-access':
         // TODO Verify if this is what zephir does for static access
         $this->_emitter->emit(['isset', '(']);
