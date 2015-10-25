@@ -2571,31 +2571,6 @@ class InlineNormalize implements IPhase {
     return [null, $function, null];
   }
 
-  protected function _fetchToComparison($fetch) {
-    $variable = $fetch['left'];
-    return [
-      'type' => 'not-identical',
-      'left' =>
-      [
-        'type' => 'variable',
-        'value' => $variable['value'],
-        'file' => $variable['file'],
-        'line' => $variable['line'],
-        'char' => $variable['char'],
-      ],
-      'right' =>
-      [
-        'type' => 'null',
-        'file' => $fetch['file'],
-        'line' => $fetch['line'],
-        'char' => $fetch['char'],
-      ],
-      'file' => $fetch['file'],
-      'line' => $fetch['line'],
-      'char' => $fetch['char'],
-    ];
-  }
-
   protected function _isValidSudoObjectFunction($otype, $fname) {
     if (isset($this->sudo_methods[$otype])) {
       return array_key_exists($fname, $this->sudo_methods[$otype]);
