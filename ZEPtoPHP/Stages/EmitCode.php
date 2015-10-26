@@ -1309,7 +1309,11 @@ class EmitCode implements IStage {
    * @param type $ast
    */
   protected function _expressionScall($call, $class = null, $method = null) {
-    $this->_emitter->emit([$call['class'], '::', $call['name'], '(']);
+    // Take Into Account if Class Name is By Name or By Reference
+    $classname = isset($call['dynamic-class']) && $call['dynamic-class'] ? "\$${call['class']}" : $call['class'];
+    // Take Into Account if Method Name is By Name or By Reference
+    $methodname = isset($call['dynamic']) && $call['dynamic'] ? "\$${call['name']}" : $call['name'];
+    $this->_emitter->emit([$classname, '::', $methodname, '(']);
     if (count($call['parameters'])) {
       $first = true;
       foreach ($call['parameters'] as $parameter) {
