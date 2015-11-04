@@ -31,6 +31,52 @@ function is_php_version($version) {
 }
 
 /**
+ * See zephir_memnstr() and zephir_memnstr_str() in file string.c
+ * 
+ * Check if a string is contained into another
+ * 
+ * @param string $haystack
+ * @param string $needle
+ * @return boolean
+ */
+function memstr($haystack, $needle) {
+  if (!isset($haystack) && is_string($haystack)) {
+    return false;
+  }
+  if (!isset($needle) && is_string($needle)) {
+    return false;
+  }
+
+  return !(strpos($haystack, $needle) === FALSE);
+}
+
+function get_class_ns($haystack, $needle, $case_sensitive = false) {
+  throw new \Exception('Function Not Implemented.');
+}
+
+function get_ns_class($haystack, $needle, $case_sensitive = false) {
+  throw new \Exception('Function Not Implemented.');
+}
+
+/**
+ * 
+ * @param type $str
+ * @return type
+ */
+function camelize($str) {
+  return zephir_camelize($str);
+}
+
+/**
+ * 
+ * @param type $str
+ * @return type
+ */
+function uncamelize($str) {
+  throw new \Exception('Function Not Implemented.');
+}
+
+/**
  * See zephir_start_with() in file string.c
  * 
  * Checks if a zval string starts with a zval string
@@ -60,23 +106,37 @@ function starts_with($haystack, $needle, $case_sensitive = false) {
 }
 
 /**
- * See zephir_memnstr() and zephir_memnstr_str() in file string.c
  * 
- * Check if a string is contained into another
- * 
- * @param string $haystack
- * @param string $needle
- * @return boolean
+ * @param type $str
+ * @return type
  */
-function memstr($haystack, $needle) {
-  if (!isset($haystack) && is_string($haystack)) {
-    return false;
-  }
-  if (!isset($needle) && is_string($needle)) {
-    return false;
+function ends_with($str) {
+  throw new \Exception('Function Not Implemented.');
+}
+
+/**
+ * See zephir_prepare_virtual_path() in file.c
+ * 
+ * Replaces directory separators by the virtual separator
+ * 
+ * @param string $path
+ * @param string $virtual_separator
+ * @return string
+ */
+function prepare_virtual_path($path, $virtual_separator) {
+  if (isset($path) && is_string($path)) {
+    if (!isset($virtual_separator) || !is_string($virtual_separator)) {
+      return $path;
+    }
+  } else {
+    return '';
   }
 
-  return !(strpos($haystack, $needle) === FALSE);
+  // Convert Path to lower case
+  $virtual_str = strtolower($path);
+  // replace '/', '\' and ':' with $virtual_separator
+  $virtual_str = preg_replace("/\/|\\|:/", $virtual_separator, $virtual_str);
+  return $virtual_str;
 }
 
 /**
@@ -155,31 +215,6 @@ function create_symbol_table() {
 }
 
 /**
- * See zephir_prepare_virtual_path() in file.c
- * 
- * Replaces directory separators by the virtual separator
- * 
- * @param string $path
- * @param string $virtual_separator
- * @return string
- */
-function prepare_virtual_path($path, $virtual_separator) {
-  if (isset($path) && is_string($path)) {
-    if (!isset($virtual_separator) || !is_string($virtual_separator)) {
-      return $path;
-    }
-  } else {
-    return '';
-  }
-
-  // Convert Path to lower case
-  $virtual_str = strtolower($path);
-  // replace '/', '\' and ':' with $virtual_separator
-  $virtual_str = preg_replace("/\/|\\|:/", $virtual_separator, $virtual_str);
-  return $virtual_str;
-}
-
-/**
  * See zephir_compare_mtime() in file.c
  * 
  * Compares two file paths returning 1 if the first mtime is greater or equal than the second
@@ -206,6 +241,18 @@ function compare_mtime($filename1, $filename2) {
   return (int) $mfilename1 >= $mfilename2;
 }
 
+// function function globals_get($globalName) - implemented in zephir_globals.php
+// function function globals_set($globalName, $value) - implemented in zephir_globals.php
+
+/**
+ * 
+ * @param type $left
+ * @param type $values
+ */
+function merge_append(&$left, $values) {
+  zephir_merge_append($left, $values);
+}
+
 /**
  * 
  * @param object $class
@@ -214,8 +261,4 @@ function compare_mtime($filename1, $filename2) {
  */
 function get_class_lower($class) {
   return zephir_get_class($class, true);
-}
-
-function camelize($str) {
-  return zephir_camelize($str);
 }

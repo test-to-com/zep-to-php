@@ -55,7 +55,7 @@ function _globals_ready() {
 
 function _globals_is($globalName) {
   global $_ZEPHIR_GLOBALS;
-  
+
   // Do we have valid incoming parameters?
   if (!isset($globalName) || !is_string($globalName)) { // NO
     throw new \Exception("A string parameter is required for 'globals_get'");
@@ -67,6 +67,12 @@ function _globals_is($globalName) {
   return array_key_exists($globalName, $_ZEPHIR_GLOBALS);
 }
 
+/**
+ * 
+ * @global array $_ZEPHIR_GLOBALS
+ * @param type $globalName
+ * @return boolean
+ */
 function globals_get($globalName) {
   global $_ZEPHIR_GLOBALS;
 
@@ -77,6 +83,12 @@ function globals_get($globalName) {
   return $_ZEPHIR_GLOBALS[$globalName];
 }
 
+/**
+ * 
+ * @global array $_ZEPHIR_GLOBALS
+ * @param type $globalName
+ * @param type $value
+ */
 function globals_set($globalName, $value) {
   global $_ZEPHIR_GLOBALS;
 

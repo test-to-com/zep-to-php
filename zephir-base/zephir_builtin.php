@@ -93,7 +93,6 @@ function zephir_isset_property($object, $property) {
   return FALSE;
 }
 
-
 /**
  * 
  * @param type $result
@@ -189,4 +188,24 @@ function zephir_camelize($str) {
   $camilized = implode(array_map('ucfirst', explode('-', $str)));
   $camilized = implode(array_map('ucfirst', explode('_', $str)));
   return $camilized;
+}
+
+/**
+ * 
+ * @param type $left
+ * @param type $values
+ * @throws Exception
+ */
+function zephir_merge_append(&$left, $values) {
+  if (!(isset($left) && is_array($left))) {
+    throw new Exception('First parameter of zephir_merge_append must be an array');
+  }
+
+  if (isset($values)) {
+    if (is_array($values)) {
+      $left = array_merge($left, $values);
+    } else {
+      $left[] = $values;
+    }
+  }
 }
