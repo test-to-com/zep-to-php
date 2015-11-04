@@ -1055,7 +1055,7 @@ class InlineNormalize implements IPhase {
 
     return [$before, $fcall, $after];
   }
-
+  
   protected function _expressionMCall(&$class, &$method, $expression) {
     $before = [];
     $parameters = [];
