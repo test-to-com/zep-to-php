@@ -1766,11 +1766,12 @@ class EmitCode implements IStage {
   }
 
   protected function _expressionString($ast, $class = null, $method = null) {
-    // The parser doubles '\'
-    $string = str_replace('\\\\', '\\', $ast['value']);
-    // Make usre that string that include quotes and such, are properly escaped.
-    $string = addslashes($string);
-    $this->_emitter->emit("'{$string}'");
+    $string=$ast['value'];
+    /* IMPLEMENTATION NOTE: Since Zephir does not allow embeding of variables in
+     * string.
+     */    
+    $string = str_replace('$', '\\$', $ast['value']);
+    $this->_emitter->emit("\"{$string}\"");
   }
 
   protected function _expressionChar($ast, $class = null, $method = null) {
