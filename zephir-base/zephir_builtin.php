@@ -181,13 +181,116 @@ function zephir_get_class($class, $lower = false) {
  * @throws \Exception
  */
 function zephir_camelize($str) {
-  if (!isset($str) || !is_string($str)) {
+  if (!(isset($str) && is_string($str))) {
     throw new \Exception("Invalid arguments supplied for zephir_camelize()");
   }
 
   $camilized = implode(array_map('ucfirst', explode('-', $str)));
   $camilized = implode(array_map('ucfirst', explode('_', $str)));
   return $camilized;
+}
+
+/**
+ * 
+ * @param string $str
+ * @return string
+ * @throws \Exception
+ */
+function zephir_uncamelize($str) {
+  if (!(isset($str) && is_string($str))) {
+    throw new \Exception('Invalid arguments supplied for zephir_uncamelize()');
+  }
+
+  $matches = [];
+  $count = preg_match_all('/[A-Z]/', $str, $matches);
+  if ($count) {
+    foreach ($matches as $match) {
+      $match = $match[0];
+      $replace = '_' . strtolower($match);
+      $str = str_replace($match, $replace, $str);
+    }
+
+    // Remove Leading '_'
+    $str = ltrim($str, '_');
+  }
+
+  return $str;
+}
+
+/**
+ * 
+ * @param type $object
+ * @param type $lower
+ * @return type
+ * @throws \Exception
+ */
+function zephir_get_class_ns($object, $lower = false) {
+  // Do we have a valid value for 'object' (object or string)
+  if (!isset($object) || ((gettype($object) !== 'object') && !is_string($object))) { // NO
+    throw new \Exception("zephir_get_class_ns expects an object");
+  }
+
+  // Is 'object' an object?
+  if (gettype($object) === 'object') { // YES: Get it's class name
+    $classname = get_class($object);
+  } else { // NO: it's a string
+    $classname = trim($object);
+    // Is it an empty string?
+    if (strlen($classname) === 0) { // YES
+      throw new \Exception("zephir_get_class_ns expects an object");
+    }
+
+    // Remove Leading any Leading Slash
+    $classname = ltrim($classname, '\\');
+  }
+
+  // Do we have a namespace component in the class name?
+  $slash = strrpos($classname, '\\');
+  if ($slash !== FALSE) { // YES: Remove It (we only wan the unqualified class name)
+    $classname = substr($classname, $slash + 1);
+  }
+
+  // Do we want a lower case version of the class name?
+  return !!$lower ? strtolower($classname) : $classname;
+}
+
+/**
+ * 
+ * @param type $object
+ * @param type $lower
+ * @return type
+ * @throws \Exception
+ */
+function zephir_get_ns_class($object, $lower = false) {
+  // Do we have a valid value for 'object' (object or string)
+  if (!isset($object) || ((gettype($object) !== 'object') && !is_string($object))) { // NO
+    throw new \Exception("zephir_get_ns_class expects an object");
+  }
+
+  // Is 'object' an object?
+  if (gettype($object) === 'object') { // YES: Get it's class name
+    $classname = get_class($object);
+  } else { // NO: it's a string
+    $classname = trim($object);
+    // Is it an empty string?
+    if (strlen($classname) === 0) { // YES
+      throw new \Exception("zephir_get_ns_class expects an object");
+    }
+
+    // Remove Leading any Leading Slash
+    $classname = ltrim($classname, '\\');
+  }
+
+  // Do we have a namespace component in the class name?
+  $slash = strrpos($classname, '\\');
+  if ($slash !== FALSE) { // YES: Remove It (we only wan the unqualified class name)
+    $namespace = substr($classname, 0, $slash);
+  } else {
+    $namespace = null;
+  }
+
+  // Do we want a lower case version of the namespace?
+  return isset($namespace) && (!!$lower) ? strtolower($namespace) : $namespace;
 }
 
 /**

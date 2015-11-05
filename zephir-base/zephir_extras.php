@@ -50,12 +50,24 @@ function memstr($haystack, $needle) {
   return !(strpos($haystack, $needle) === FALSE);
 }
 
-function get_class_ns($haystack, $needle, $case_sensitive = false) {
-  throw new \Exception('Function Not Implemented.');
+/**
+ * 
+ * @param type $object
+ * @param type $lower
+ * @return type
+ */
+function get_class_ns($object, $lower = false) {
+  return zephir_get_class_ns($object, $lower);
 }
 
-function get_ns_class($haystack, $needle, $case_sensitive = false) {
-  throw new \Exception('Function Not Implemented.');
+/**
+ * 
+ * @param type $object
+ * @param type $lower
+ * @return type
+ */
+function get_ns_class($object, $lower = false) {
+  return zephir_get_ns_class($object, $lower);
 }
 
 /**
@@ -73,7 +85,7 @@ function camelize($str) {
  * @return type
  */
 function uncamelize($str) {
-  throw new \Exception('Function Not Implemented.');
+  return zephir_uncamelize($str);
 }
 
 /**
