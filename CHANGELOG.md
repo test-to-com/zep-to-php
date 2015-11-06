@@ -9,7 +9,7 @@ This had 2 problems:
 2. (Minor) You don't have to escape " (double quote). This was generating problems
 in the Phalcon Debug Extension, in SQL that was being generated.
 
-I'm now output ZEPHIR strings as " (double quote) PHP Strings.
+I now output ZEPHIR strings as " (double quote) PHP Strings.
 
 **NOTE: This Change, like any change in the PHP code emitter, forces a rebuild in
 the PHALCON Debug Extension**
