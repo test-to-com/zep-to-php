@@ -505,7 +505,7 @@ class InlineNormalize implements IPhase {
     $over = $foreach['expr'];
 
     // Are we doing a for in reverse order?
-    $is_reverse = isset($statement['reverse']) && $statement['reverse'];
+    $is_reverse = isset($foreach['reverse']) && $foreach['reverse'];
     if ($is_reverse) { // YES
       $reverse = [
         'type' => 'fcall',
@@ -519,7 +519,7 @@ class InlineNormalize implements IPhase {
       ];
 
       $over = $reverse;
-      unset($statement['reverse']);
+      unset($foreach['reverse']);
     }
 
     $foreach['expr'] = $over;
