@@ -274,3 +274,17 @@ function merge_append(&$left, $values) {
 function get_class_lower($class) {
   return zephir_get_class($class, true);
 }
+
+/**
+ * 
+ * @param type $object
+ * @return type
+ * @throws \Exception
+ */
+function iterator($object) {
+  if (!isset($object) || !is_object($object)) {
+    throw new \Exception("iterator expects an object");
+  }
+  
+  return $object;
+}
