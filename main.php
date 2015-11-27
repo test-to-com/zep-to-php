@@ -34,6 +34,16 @@ $di->set("fileSystem", "\ZEPtoPHP\Base\FileSystem\HardDisk", true);
 $di->setShared('emitter', "\ZEPtoPHP\Emitters\File");
 //$di->setShared('emitter', "\ZEPtoPHP\Emitters\Console");
 
+// Emitter Settings
+$di->setShared('settings', function () use ($di) {
+  // Import Format Settings
+  $settings = require 'format.php';
+
+  // Build configuration Container
+  $config = new ZEPtoPHP\HierarchalConfig($settings);
+  return $config->setDI($di);
+});
+
 // Define Command Line Options
 $specs = new OptionCollection;
 // Output Directory (STRING Optional - DEFAULT output goes to ./output)
@@ -125,15 +135,15 @@ if (file_exists($input)) {
 $fs->initialize();
 
 /*
-echo "Current Working Directory [" . BASEPATH . "]\n";
-echo "Input Directory [{$input_dir}]\n";
-if (isset($input_file)) {
+  echo "Current Working Directory [" . BASEPATH . "]\n";
+  echo "Input Directory [{$input_dir}]\n";
+  if (isset($input_file)) {
   echo "Input File [{$input_file}]\n";
-}
-echo "Output Directory [{$output_dir}]\n";
-echo "Cache Directory [{$cache_dir}]\n";
-echo "Temporary Directory [{$tmp_dir}]\n";
-*/
+  }
+  echo "Output Directory [{$output_dir}]\n";
+  echo "Cache Directory [{$cache_dir}]\n";
+  echo "Temporary Directory [{$tmp_dir}]\n";
+ */
 
 $di->set("compiler", "\ZEPtoPHP\Compiler", true);
 $di->set("compiler-stages", function() {

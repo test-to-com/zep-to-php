@@ -16,26 +16,44 @@
 namespace ZEPtoPHP\Base;
 
 /**
- * DI capable object
+ * Configuration
  * 
- * Based Directly on Phalcon\Di\InjectionAwareInterface;
+ * Based Directly on Phalcon\DiInterface
  * 
  * @author Paulo Ferreira <pf at sourcenotes.org>
  */
-interface InjectionAware {
+interface Config extends InjectionAware, \ArrayAccess {
 
   /**
-   * Sets the dependency injector
+   * Does the property exist?
    * 
-   * @param \ZEPtoPHP\Base\DI $dependencyInjector New Dependency Object
-   * @return self Reference to self
+   * @param type $path Path to Property
+   * @return boolean 'true' if property exists and has a non-null value.
    */
-  public function setDI(DI $dependencyInjector);
+  public function has($path);
 
   /**
-   * Returns the internal dependency injector
+   * Set a Properties Value
    * 
-   * @return \ZEPtoPHP\Base\DI Current Dependency Injection Object used
+   * @param type $path Path to Property
+   * @param type $value New Value
+   * @return self Reference to Self
    */
-  public function getDI();
+  public function set($path, $value);
+
+  /**
+   * Retrieve a Properties Value
+   * 
+   * @param string $path Path to Property
+   * @return mixed Properties Value or NULL if it does not exist
+   */
+  public function get($path);
+
+  /**
+   * Remove an existing property
+   * 
+   * @param type $path Path to Property
+   * @return self Reference to Self
+   */
+  public function remove($path);
 }

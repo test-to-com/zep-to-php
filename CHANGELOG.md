@@ -1,3 +1,9 @@
+# 2015-11-27
+
+**MAJOR:** Rewrote the Code Emitter so that it's now possible to control the 
+formatting of the PHP Output Code, without having to having to alter the Source
+of the emitter. Should Make the PHP OUTPUT less of an eye sore :)
+
 # 2015-11-05
 
 **MAJOR:** Rewrote the way string were being converted to PHP. Initially, since Zephir doesn't

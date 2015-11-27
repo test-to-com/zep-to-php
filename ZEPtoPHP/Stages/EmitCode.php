@@ -24,9 +24,12 @@ use ZEPtoPHP\Base\Stage as IStage;
  */
 class EmitCode implements IStage {
 
-  const VERSION = '20151025';
+  const VERSION = '20151126';
+  // How to Handle Empty Statement Blocks?
+  const EMPTY_NOTHING = 0; // Display Nothing
+  const EMPTY_BLOCK = 1; // Display Empty Block
+  const EMPTY_COMMA = 2; // Display Empty Statement (';')
 
-  // Mixins
   use \ZEPtoPHP\Base\Mixins\DI;
 
   // TODO: Maybe Create a Compile Context Object so as to simplify handlers
@@ -49,6 +52,7 @@ class EmitCode implements IStage {
    */
   public function initialize() {
     $this->_emitter = $this->getDI()->getShared('emitter');
+    $this->_emitter->initialize();
     return $this;
   }
 
@@ -71,15 +75,18 @@ class EmitCode implements IStage {
    * @return array Old or Transformed AST
    */
   public function compile($ast) {
-    $this->_emitter->emit("<?php", true);
-    $this->_emitter->emit('// EMITTER VERSION [' . self::VERSION . ']', true);
+    /* FILE HEADER */
+    $this->_emitter
+      ->emit(['<?php', '// EMITTER VERSION [' . self::VERSION . ']'])
+      ->flush();
+
+    /* FILE BODY */
     $this->_processStatementBlock($ast);
-    /*
-      foreach ($ast as $index => $entry) {
-      $this->_redirectAST($entry['type'], $entry);
-      }
-     */
-    $this->_emitter->emit("?>", true);
+
+    /* FILE FOOTER */
+    $this->_emitter
+      ->emit("?>")
+      ->flush();
     return $ast;
   }
 
@@ -134,34 +141,102 @@ class EmitCode implements IStage {
     }
   }
 
+  protected function _classSectionConstants($class, $constants) {
+    // Do we have constants to output?
+    if (isset($constants) && is_array($constants)) { // YES
+      // TODO: Move to the Flag to Configuration File
+      $config_sortConstants = true; // Sort Class or Interface Constants?
+      if ($config_sortConstants) {
+        ksort($constants);
+      }
+
+      /* const CONSTANT = 'constant value'; */
+      foreach ($constants as $name => $constant) {
+        $this->_emitter
+          ->emit_keywords('const')
+          ->emit($name)
+          ->emit_operator('=');
+        $this->_processExpression($constant['default'], $class);
+        $this->_emitter->emit_eos();
+      }
+    }
+  }
+
+  protected function _classSectionProperties($class, $properties) {
+    // Do we have properties to output?
+    if (isset($properties) && is_array($properties)) { // YES
+      // TODO: Move to the Flag to Configuration File
+      $config_sortProperties = true; // Sort Class or Interface Properties?
+      if ($config_sortProperties) {
+        ksort($properties);
+      }
+
+      foreach ($properties as $name => $property) {
+        if (isset($property['visibility'])) {
+          $this->_emitter->emit_keywords($property['visibility']);
+        }
+        $this->_emitter->emit("\${$name}");
+        if (isset($property['default'])) {
+          $this->_emitter->emit_operator('=');
+          $this->_processExpression($property['default'], $class);
+        }
+        $this->_emitter->emit_eos();
+      }
+    }
+  }
+
+  protected function _classSectionMethods($class, $methods) {
+    // Do we have properties to output?
+    if (isset($methods) && is_array($methods)) { // YES
+      // TODO: Move to the Flag to Configuration File
+      $config_sortMethods = true; // Sort Class or Interface Methods?
+      if ($config_sortMethods) {
+        ksort($methods);
+      }
+
+      foreach ($methods as $name => $method) {
+        // Process Class Metho
+        $this->_statementMethod($class, $name, $method);
+      }
+    }
+  }
+
   protected function _statementNamespace($namespace, $class, $method) {
-    $this->_emitter->emit(['namespace', $namespace['name'], ';'], true);
+    $this->_emitter
+      ->emit_keyword('namespace')
+      ->emit($namespace['name'])
+      ->emit_eos('namespace');
   }
 
   protected function _statementUse($use, $class = null, $method = null) {
-    // TODO: Move to the Flag to Configuration File
-    $config_useLFEntries = true; // Seperate single use entries (seperated by comma, by linefeed)
+    // Beginning of Statement
+    $this->_emitter
+      ->push_indent()
+      ->emit_keyword('use');
 
-    $this->_emitter->emit('use');
+    // USE list
     $first = true;
     $indent = true; // Should we indent (more)?
     foreach ($use['aliases'] as $alias) {
       if (!$first) {
-        $this->_emitter->emit(',');
-        if ($config_useLFEntries) {
-          $this->_emitter->emitNL();
-          $this->_emitter->indent($indent);
-          $indent = false;
-        }
+        $this->_emitter
+          ->emit_operator(',', 'use')
+          ->indent($indent);
+        $indent = false;
       }
       $this->_emitter->emit($alias['name']);
       if (isset($alias['alias'])) {
-        $this->_emitter->emit(['as', $alias['alias']]);
+        $this->_emitter
+          ->emit_keyword('as')
+          ->emit($alias['alias']);
       }
       $first = false;
     }
-    $this->_emitter->emitEOS();
-    $this->_emitter->unindent(!$indent);
+
+    // End of Statement
+    $this->_emitter
+      ->emit_eos('use')
+      ->pop_indent();
   }
 
   protected function _statementRequire($require, $class = null, $method = null) {
@@ -169,100 +244,92 @@ class EmitCode implements IStage {
      * Normalize the Require Statement and Expression so that we don't have to
      * 2 handlers for the same thing.
      */
-    $this->_emitter->emit('require');
+    $this->_emitter->emit_keyword('require');
     $this->_processExpression($require['expr'], $class, $method);
-    $this->_emitter->emitEOS();
+    $this->_emitter->emit_eos('require');
   }
 
   protected function _statementClass($class) {
-    /*
-      class_declaration_statement:
-      class_modifiers T_CLASS { $<num>$ = CG(zend_lineno); }
-      T_STRING extends_from implements_list backup_doc_comment '{' class_statement_list '}'
-      { $$ = zend_ast_create_decl(ZEND_AST_CLASS, $1, $<num>3, $7, zend_ast_get_str($4), $5, $6, $9, NULL); }
-      |	T_CLASS { $<num>$ = CG(zend_lineno); }
-      T_STRING extends_from implements_list backup_doc_comment '{' class_statement_list '}'
-      { $$ = zend_ast_create_decl(ZEND_AST_CLASS, 0, $<num>2, $6, zend_ast_get_str($3), $4, $5, $8, NULL); }
-      ;
-     * 
-      class_modifiers:
-      class_modifier 					{ $$ = $1; }
-      |	class_modifiers class_modifier 	{ $$ = zend_add_class_modifier($1, $2); }
-      ;
-     * 
-      class_modifier:
-      T_ABSTRACT 		{ $$ = ZEND_ACC_EXPLICIT_ABSTRACT_CLASS; }
-      |	T_FINAL 		{ $$ = ZEND_ACC_FINAL; }
-      ;
-     */
+    $settings = $this->getDI()['settings'];
 
-    /*
-     * CLASS HEADER
-     */
-    $this->_emitter->emitNL();
-    if ($class['final']) {
-      $this->_emitter->emit('final');
-    } else if ($class['abstract']) {
-      $this->_emitter->emit('abstract');
+    // Emit Class Documentation
+    if (isset($class['docblock'])) {
+      $this->_emitter
+        ->emit_nl(!!$settings['newlines.comment|before'])
+        ->emit('/*', true)
+        ->emit($class['docblock'], true)
+        ->emit('*/', true)
+        ->emit_nl(!!$settings['newlines.comment|after']);
     }
-    $this->_emitter->emit(["class", $class['name']]);
 
-    // TODO: Move to the Flag to Configuration File
-    $config_classLFExtends = true;            // Seperate class / extends with line-feed
+    /* ------------
+     * CLASS HEADER
+     * ------------ */
+    $this->_emitter
+      ->emit_nl()
+      ->push_indent(); // Save Current Indent Level
+    if ($class['final']) {
+      $this->_emitter->emit_keywords('final');
+    } else if ($class['abstract']) {
+      $this->_emitter->emit_keywords('abstract');
+    }
+    $this->_emitter
+      ->emit_keywords('class')
+      ->emit($class['name']);
+
     // Handle Extends
     $extends = isset($class['extends']) ? $class['extends'] : null;
     if (isset($extends)) {
-      $this->_emitter->emitNL($config_classLFExtends);
-      $this->_emitter->indent($config_classLFExtends);
-      $this->_emitter->emit(['extends', $extends]);
-      $this->_emitter->unindent($config_classLFExtends);
+      $this->_emitter
+        ->emit_nl(!!$settings['newline.class.extends|before'])
+        ->indent()
+        ->emit_keywords('extends')
+        ->emit($extends)
+        ->unindent()
+        ->emit_nl(!!$settings['newlines.class.extends|after']);
     }
 
-    // TODO: Move to the Flag to Configuration File
-    $config_classLFImplementExtends = true;   // Seperate implment/extends with line-feed
-    $config_classLFImplements = true; // Seperate class / implements with line-feed
-    $config_classNLImplements = true; // Multiple Implements on Seperate Lines
     // Handle Implements
     $implements = isset($class['implements']) ? $class['implements'] : null;
     if (isset($implements)) {
-      // Add Line Feed before Implements?
-      $lf = $config_classLFExtends ||
-        ($config_classLFImplementExtends && isset($extends));
+      $this->_emitter
+        ->emit_nl(!!$settings['newlines.class.implements|before'] && isset($extends))
+        ->indent()
+        ->emit_keywords('implements');
 
-      $this->_emitter->emitNL($lf);
-      $this->_emitter->indent($lf);
-      $this->_emitter->emit('implements');
       $first = true;
       foreach ($implements as $interace) {
         if (!$first) {
-          $this->_emitter->emit(',', $config_classNLImplements);
+          $this->_emitter->emit_operator(',', 'class.implements');
         }
         $this->_property = true;
         $this->_expressionVariable($interace, $class, null);
         $first = false;
       }
-      /* TODO Handle Case in Which we have implements (but not extends with respect to
-       * line feeds see oo/oonativeinterfaces
-       */
-      $this->_emitter->unindent($lf);
+      $this->_emitter->unindent();
     }
 
-    // TODO: Move to the Flag to Configuration File
-    $config_classLFStartBlock = true; // class '{' on new line?
-    $this->_emitter->emitNL($config_classLFStartBlock);
-    $this->_emitter->emit('{', true);
-    $this->_emitter->indent();
-
-    /*
+    /* ---------------
      * CLASS BODY
-     */
+     * --------------- */
+    // Opening Brace
+    $this->_emitter
+      ->emit_operator('{', 'block.class')
+      ->flush() // Garauntee that we start statement block on new line
+      ->pop_indent()
+      ->indent();
 
     // Emit the Various Sections
     $section_order = ['constants', 'properties', 'methods'];
+    $seperate_section = $settings->get('newlines.class|section', false);
     foreach ($section_order as $order) {
       $section = isset($class[$order]) ? $class[$order] : null;
       if (isset($section)) {
-        $handler = $this->_handlerName('_emitClass', $order);
+        // Make sure we have flushed any pending changes
+        $this->_emitter
+          ->flush()
+          ->emit_nl($seperate_section);
+        $handler = $this->_handlerName('_classSection', $order);
         if (method_exists($this, $handler)) {
           $this->$handler($class, $section);
         } else {
@@ -271,69 +338,77 @@ class EmitCode implements IStage {
       }
     }
 
-    /*
-     * CLASS FOOTER
-     */
-
-    // Garauntee that we flush any pending lines
-    $this->_emitter->emitNL();
-    $this->_emitter->unindent();
-    $this->_emitter->emit('}', true);
+    // Closing Brace
+    $this->_emitter
+      ->flush()// Garauntee that we flush any pending lines
+      ->unindent()
+      ->emit_operator('}', 'block.class')
+      ->flush();
   }
 
   protected function _statementInterface($interface) {
+    $settings = $this->getDI()['settings'];
 
-    /*
+    // Emit Class Documentation
+    if (isset($class['docblock'])) {
+      $this->_emitter
+        ->emit_nl(!!$settings['newlines.comment|before'])
+        ->emit('/*', true)
+        ->emit($class['docblock'], true)
+        ->emit('*/', true)
+        ->emit_nl(!!$settings['newlines.comment|after']);
+    }
+
+    /* ----------------
      * INTERFACE HEADER
-     */
-    $this->_emitter->emitNL();
-    $this->_emitter->emit(["interface", $interface['name']]);
-
-    // TODO: Move to the Flag to Configuration File
-    $config_interfaceLFExtends = true; // Seperate interface / extends with line-feed
+     * ---------------- */
+    $this->_emitter
+      ->emit_nl()
+      ->push_indent() // Save Current Indent Level
+      ->emit_keywords('interface')
+      ->emit($interface['name']);
 
     $extends = isset($interface['extends']) ? $interface['extends'] : null;
     if (isset($extends)) {
-      $this->_emitter->emitNL($config_interfaceLFExtends);
-      $this->_emitter->indent($config_interfaceLFExtends);
-
-      $this->_emitter->emit('extends');
+      $this->_emitter
+        ->emit_nl(!!$settings['newlines.interface.extends|before'])
+        ->indent()
+        ->emit_keywords('extends');
 
       $first = true;
-      $indent = true;
       foreach ($extends as $extend) {
         if (!$first) {
-          $this->_emitter->emit(',');
-          $this->_emitter->emitNL($config_interfaceLFExtends);
-          $this->_emitter->indent($indent);
-          $indent = false;
+          $this->_emitter->emit_operator(',', 'interface.extends');
         }
         $this->_property = true;
         $this->_processExpression($extend);
         $first = false;
       }
-      $this->_emitter->emitNL();
-      $this->_emitter->unindent(!$indent);
-      $this->_emitter->unindent($config_interfaceLFExtends);
     }
 
-    // TODO: Move to the Flag to Configuration File
-    $config_interfaceLFStartBlock = true; // interface '{' on new line?
-    $this->_emitter->emitNL($config_interfaceLFStartBlock);
-    $this->_emitter->emit('{', true);
-    $this->_emitter->indent();
-
-    /*
+    /* --------------
      * INTERFACE BODY
-     */
+     * -------------- */
+    // Opening Brace
+    $this->_emitter
+      ->emit_operator('{', 'block.interface')
+      ->flush() // Garauntee that we start statement block on new line
+      ->pop_indent()
+      ->indent();
 
     // Emit the Various Sections
     $section_order = ['constants', 'properties', 'methods'];
+    $seperate_section = $settings->get('newlines.interface|section', false);
     foreach ($section_order as $order) {
       $section = isset($interface[$order]) ? $interface[$order] : null;
       if (isset($section)) {
+        // Make sure we have flushed any pending changes
+        $this->_emitter
+          ->flush()
+          ->emit_nl($seperate_section);
+
         $this->_interface = true;
-        $handler = $this->_handlerName('_emitClass', $order);
+        $handler = $this->_handlerName('_classSection', $order);
         if (method_exists($this, $handler)) {
           $this->$handler($interface, $section);
         } else {
@@ -343,14 +418,12 @@ class EmitCode implements IStage {
       }
     }
 
-    /*
-     * CLASS FOOTER
-     */
-
-    // Garauntee that we flush any pending lines
-    $this->_emitter->emitNL();
-    $this->_emitter->unindent();
-    $this->_emitter->emit('}', true);
+    // Closing Brace
+    $this->_emitter
+      ->flush()// Garauntee that we flush any pending lines
+      ->unindent()
+      ->emit_operator('}', 'block.interface')
+      ->flush();
   }
 
   protected function _emitComment($ast) {
@@ -366,175 +439,74 @@ class EmitCode implements IStage {
     echo "/{$ast['value']}/\n";
   }
 
-  protected function _emitClassConstants($class, $constants) {
-    // Do we have constants to output?
-    if (isset($constants) && is_array($constants)) { // YES
-      // TODO: Move to the Flag to Configuration File
-      $config_sortConstants = true; // Sort Class or Interface Constants?
-      if ($config_sortConstants) {
-        ksort($constants);
-      }
+  protected function _statementMethod($class, $name, $method) {
+    $settings = $this->getDI()['settings'];
 
-      /* const CONSTANT = 'constant value'; */
-      foreach ($constants as $name => $constant) {
-        $this->_emitter->emit(['const', $name, '=']);
-        $this->_processExpression($constant['default'], $class);
-        $this->_emitter->emitEOS();
-      }
-    }
-  }
-
-  protected function _emitClassProperties($class, $properties) {
-    // Do we have properties to output?
-    if (isset($properties) && is_array($properties)) { // YES
-      // TODO: Move to the Flag to Configuration File
-      $config_sortProperties = true; // Sort Class or Interface Properties?
-      if ($config_sortProperties) {
-        ksort($properties);
-      }
-
-      foreach ($properties as $name => $property) {
-        if (isset($property['visibility'])) {
-          $this->_emitter->emit($property['visibility']);
-        }
-        $this->_emitter->emit("\${$name}");
-        if (isset($property['default'])) {
-          $this->_emitter->emit('=');
-          $this->_processExpression($property['default'], $class);
-        }
-        $this->_emitter->emitEOS();
-      }
-    }
-  }
-
-  protected function _emitClassMethods($class, $methods) {
-    // Do we have properties to output?
-    if (isset($methods) && is_array($methods)) { // YES
-      // TODO: Move to the Flag to Configuration File
-      $config_sortMethods = true; // Sort Class or Interface Methods?
-      if ($config_sortMethods) {
-        ksort($methods);
-      }
-
-      foreach ($methods as $name => $method) {
-        // Process Class Metho
-        $this->_emitClassMethod($class, $name, $method);
-      }
-    }
-  }
-
-  protected function _emitClassMethod($class, $name, $method) {
+    // Emit Method Documentation
     if (isset($method['docblock'])) {
-      $this->_emitter->emitNL();
-      $this->_emitter->emit('/*', true);
-      $this->_emitter->emit($method['docblock'], true);
-      ;
-      $this->_emitter->emit('*/', true);
+      $this->_emitter
+        ->emit_nl($settings['newlines.comment|before'])
+        ->emit('/*', true)
+        ->emit($method['docblock'], true)
+        ->emit('*/', true)
+        ->emit_nl($settings['newlines.comment|after']);
     }
-    /*
+
+    /* -------------
      * METHOD HEADER
-     */
+     * ------------- */
+    // Method Visibility
     if (isset($method['visibility'])) {
-      $this->_emitter->emit($method['visibility']);
+      $this->_emitter->emit_keywords($method['visibility']);
     }
-    $this->_emitter->emit(['function', $name, '(']);
-    if (count($method['parameters'])) {
-      // TODO: Move to the Flag to Configuration File
-      $config_methodLFParameters = true; // Function Parameters on new line?
-      $this->_emitter->emitNL($config_methodLFParameters);
-      $this->_emitter->indent($config_methodLFParameters);
 
-      $first = true;
-      foreach ($method['parameters'] as $parameter) {
-        if (!$first) {
-          $this->_emitter->emit(',');
-          $this->_emitter->emitNL($config_methodLFParameters);
-        }
-        $this->_processExpression($parameter, $class, $method);
-        $first = false;
-      }
-      $this->_emitter->emitNL($config_methodLFParameters);
-      $this->_emitter->unindent($config_methodLFParameters);
-    }
-    $this->_emitter->emit(')');
+    // Method Name
+    $this->_emitter
+      ->emit_keywords('function')
+      ->emit($method['name']);
 
+    // Method Parameters
+    $this->_emitFunctionParameters($method['parameters'], 'method', $class, $method);
 
-
-    /*
+    /* -----------
      * METHOD BODY
-     */
+     * ----------- */
     //Are we in interface mode?
     if (!$this->_interface) { // NO: Class Mode
-
-      /* METHOD START */
-      // TODO: Move to the Flag to Configuration File
-      $config_methodLFStartBlock = true; // method '{' on new line?
-      $this->_emitter->emitNL($config_methodLFStartBlock);
-      $this->_emitter->emit('{', true);
-
-      $this->_emitter->indent();
-
-      /* METHOD STATEMENTS */
-      if (isset($method['statements'])) {
-        $this->_processStatementBlock($method['statements'], $class, $method);
-      }
-
-      // Garauntee that we flush any pending lines
-      $this->_emitter->emitNL();
-      $this->_emitter->unindent();
-
-      /* METHOD END */
-      $this->_emitter->emit('}', true);
+      $this->_emitStatementBlock($method['statements'], 'method', self::EMPTY_BLOCK, $class, $method);
     } else { // YES
-      $this->_emitter->emitEOS();
+      $this->_emitter->emit_eos('method');
     }
   }
 
   protected function _statementFunction($function, $class = null, $method = null) {
-    $this->_emitter->emit(['function', $function['name'], '(']);
-    if (count($function['parameters'])) {
-      // TODO: Move to the Flag to Configuration File
-      $config_functionLFParameters = true; // Function Parameters on new line?
-      $this->_emitter->emitNL($config_functionLFParameters);
-      $this->_emitter->indent($config_functionLFParameters);
+    $settings = $this->getDI()['settings'];
 
-      $first = true;
-      foreach ($function['parameters'] as $parameter) {
-        if (!$first) {
-          $this->_emitter->emit(',');
-          $this->_emitter->emitNL($config_functionLFParameters);
-        }
-        $this->_processExpression($parameter, $class, $method);
-        $first = false;
-      }
-      $this->_emitter->emitNL($config_functionLFParameters);
-      $this->_emitter->unindent($config_functionLFParameters);
-    }
-    $this->_emitter->emit(')');
-
-    // TODO: Move to the Flag to Configuration File
-    $config_functionLFStartBlock = true; // method '{' on new line?
-    $this->_emitter->emitNL($config_functionLFStartBlock);
-    $this->_emitter->emit('{', true);
-
-
-    /*
-     * METHOD BODY
-     */
-    $this->_emitter->indent();
-
-    if (isset($function['statements'])) {
-      $this->_processStatementBlock($function['statements']);
+    // Emit Method Documentation
+    if (isset($function['docblock'])) {
+      $this->_emitter
+        ->emit_nl($settings['newlines.comment|before'])
+        ->emit('/*', true)
+        ->emit($function['docblock'], true)
+        ->emit('*/', true)
+        ->emit_nl($settings['newlines.comment|after']);
     }
 
-    // Garauntee that we flush any pending lines
-    $this->_emitter->emitNL();
-    $this->_emitter->unindent();
+    /* ---------------
+     * FUNCTION HEADER
+     * --------------- */
+    // Function Name
+    $this->_emitter
+      ->emit_keywords('function')
+      ->emit($function['name']);
 
-    /*
-     * METHOD FOOTER
-     */
-    $this->_emitter->emit('}', true);
+    // Function Parameters
+    $this->_emitFunctionParameters($function['parameters'], 'function');
+
+    /* ---------------
+     * FUNCTION BODY
+     * --------------- */
+    $this->_emitStatementBlock($function['statements'], 'function', self::EMPTY_BLOCK);
   }
 
   protected function _statementMcall($call, $class, $method) {
@@ -547,7 +519,7 @@ class EmitCode implements IStage {
      */
 
     $this->_expressionMcall($call['expr'], $class, $method);
-    $this->_emitter->emitEOS();
+    $this->_emitter->emit_eos('call.method');
   }
 
   protected function _statementFcall($call, $class, $method) {
@@ -560,7 +532,7 @@ class EmitCode implements IStage {
      */
 
     $this->_expressionFcall($call['expr'], $class, $method);
-    $this->_emitter->emitEOS();
+    $this->_emitter->emit_eos('call.funtion');
   }
 
   protected function _statementScall($call, $class, $method) {
@@ -573,94 +545,111 @@ class EmitCode implements IStage {
      */
 
     $this->_expressionScall($call['expr'], $class, $method);
-    $this->_emitter->emitEOS();
+    $this->_emitter->emit_eos();
   }
 
   protected function _statementIncr($assign, $class, $method) {
     switch ($assign['assign-to-type']) {
       case 'variable':
-        $this->_emitter->emit("\${$assign['variable']}");
+        $this->_emitter
+          ->emit("\${$assign['variable']}");
         break;
       case 'object-property':
-        $this->_emitter->emit(["\${$assign['variable']}", '->', $assign['property']]);
+        $this->_emitter
+          ->emit("\${$assign['variable']}")
+          ->emit_operator('->')
+          ->emit($assign['property']);
         break;
       default:
         throw new \Exception("Unhandled Increment Type [{$assign['assign-to-type']}] in line [{$assign['line']}]");
     }
 
-    $this->_emitter->emit('++');
-    $this->_emitter->emitEOS();
+    $this->_emitter->emit_operator('++');
+    $this->_emitter->emit_eos();
   }
 
   protected function _statementDecr($assign, $class, $method) {
     switch ($assign['assign-to-type']) {
       case 'variable':
-        $this->_emitter->emit("\${$assign['variable']}");
+        $this->_emitter
+          ->emit("\${$assign['variable']}");
         break;
       case 'object-property':
-        $this->_emitter->emit(["\${$assign['variable']}", '->', $assign['property']]);
+        $this->_emitter
+          ->emit("\${$assign['variable']}")
+          ->emit_operator('->')
+          ->emit($assign['property']);
         break;
       default:
         throw new \Exception("Unhandled Increment Type [{$assign['assign-to-type']}] in line [{$assign['line']}]");
     }
 
-    $this->_emitter->emit('--');
-    $this->_emitter->emitEOS();
+    $this->_emitter->emit_operator('--');
+    $this->_emitter->emit_eos();
   }
 
   protected function _statementAssign($assign, $class, $method) {
     // PROCESS TO Expression
     switch ($assign['assign-to-type']) {
       case 'variable':
-        $this->_emitter->emit("\${$assign['variable']}");
+        $this->_emitter
+          ->emit("\${$assign['variable']}");
         break;
       case 'dynamic-variable':
-        $this->_emitter->emit("\$\${$assign['variable']}");
+        $this->_emitter
+          ->emit("\$\${$assign['variable']}");
         break;
       case 'variable-append':
-        $this->_emitter->emit(["\${$assign['variable']}", '[', ']']);
+        $this->_emitter
+          ->emit("\${$assign['variable']}")
+          ->emit_operators(['[', ']'], 'array.append');
         break;
       case 'array-index':
-        $this->_emitter->emit("\${$assign['variable']}");
+        $this->_emitter
+          ->emit("\${$assign['variable']}");
         $this->_statementAssignArrayIndex($assign['index-expr'], $class, $method);
         break;
       case 'array-index-append':
         $this->_emitter->emit("\${$assign['variable']}");
         $this->_statementAssignArrayIndex($assign['index-expr'], $class, $method);
-        $this->_emitter->emit(['[', ']']);
+        $this->_emitter->emit_operators(['[', ']'], 'array.append');
         break;
       case 'object-property':
-        $this->_emitter->emit(["\${$assign['variable']}", '->', $assign['property']]);
+        $this->_emitObjectPropery($assign['variable'], $assign['property']);
         break;
       case 'object-property-append':
-        $this->_emitter->emit(["\${$assign['variable']}", '->', $assign['property'], '[', ']']);
+        $this
+          ->_emitObjectPropery($assign['variable'], $assign['property'])
+          ->emit_operators(['[', ']'], 'array.append');
         break;
       case 'object-property-array-index':
-        $this->_emitter->emit(["\${$assign['variable']}", '->', $assign['property']]);
+        $this->_emitObjectPropery($assign['variable'], $assign['property']);
         $this->_statementAssignArrayIndex($assign['index-expr'], $class, $method);
         break;
       case 'object-property-array-index-append':
-        $this->_emitter->emit(["\${$assign['variable']}", '->', $assign['property']]);
+        $this->_emitObjectPropery($assign['variable'], $assign['property']);
         $this->_statementAssignArrayIndex($assign['index-expr'], $class, $method);
-        $this->_emitter->emit(['[', ']']);
+        $this->_emitter->emit_operators(['[', ']'], 'array.append');
         break;
       case 'variable-dynamic-object-property':
-        $this->_emitter->emit(["\${$assign['variable']}", '->', "\${$assign['property']}"]);
+        $this->_emitObjectPropery($assign['variable'], $assign['property'], true);
         break;
       case 'static-property':
-        $this->_emitter->emit([$assign['variable'], '::', "\${$assign['property']}"]);
+        $this->_emitObjectPropery($assign['variable'], $assign['property'], false, true);
         break;
       case 'static-property-append':
-        $this->_emitter->emit([$assign['variable'], '::', "\${$assign['property']}", '[', ']']);
+        $this
+          ->_emitObjectPropery($assign['variable'], $assign['property'], false, true)
+          ->emit_operators(['[', ']'], 'array.append');
         break;
       case 'static-property-array-index':
-        $this->_emitter->emit([$assign['variable'], '::', "\${$assign['property']}"]);
+        $this->_emitObjectPropery($assign['variable'], $assign['property'], false, true);
         $this->_statementAssignArrayIndex($assign['index-expr'], $class, $method);
         break;
       case 'static-property-array-index-append':
-        $this->_emitter->emit([$assign['variable'], '::', "\${$assign['property']}"]);
+        $this->_emitObjectPropery($assign['variable'], $assign['property'], false, true);
         $this->_statementAssignArrayIndex($assign['index-expr'], $class, $method);
-        $this->_emitter->emit(['[', ']']);
+        $this->_emitter->emit_operators(['[', ']'], 'array.append');
         break;
       default:
         throw new \Exception("Unhandled Assignment Type [{$assign['assign-type']}] in line [{$assign['line']}]");
@@ -669,25 +658,25 @@ class EmitCode implements IStage {
     // PROCESS ASSIGNMENT OPERATOR
     switch ($assign['operator']) {
       case 'assign':
-        $this->_emitter->emit('=');
+        $this->_emitter->emit_operator('=');
         break;
       case 'add-assign':
-        $this->_emitter->emit('+=');
+        $this->_emitter->emit_operator('+=');
         break;
       case 'sub-assign':
-        $this->_emitter->emit('-=');
+        $this->_emitter->emit_operator('-=');
         break;
       case 'mul-assign':
-        $this->_emitter->emit('*=');
+        $this->_emitter->emit_operator('*=');
         break;
       case 'div-assign':
-        $this->_emitter->emit('/=');
+        $this->_emitter->emit_operator('/=');
         break;
       case "concat-assign":
-        $this->_emitter->emit('.=');
+        $this->_emitter->emit_operator('.=');
         break;
       case 'mod-assign':
-        $this->_emitter->emit('%=');
+        $this->_emitter->emit_operator('%=');
         break;
       default:
         throw new \Exception("Unhandled assignment operator  [{$assign['operator']}] in line [{$assign['line']}]");
@@ -695,125 +684,20 @@ class EmitCode implements IStage {
 
     // PROCESS R.H.S Expression
     $this->_processExpression($assign['expr'], $class, $method);
-    $this->_emitter->emitEOS();
+    $this->_emitter->emit_eos();
   }
 
-  protected function _statementAssignArrayIndex($index, $class, $method) {
-    $this->_emitter->emit('[');
+  protected function _statementAssignArrayIndex($indices, $class, $method) {
+    $this->_emitter->emit_operator('[', 'array.index');
     $first = true;
-    foreach ($index as $index) {
+    foreach ($indices as $index) {
       if (!$first) {
-        $this->_emitter->emit([']', '[']);
+        $this->_emitter->emit_operators([']', '['], 'array.index');
       }
       $this->_processExpression($index, $class, $method);
       $first = false;
     }
-    $this->_emitter->emit(']');
-  }
-
-  protected function _emitStatementBlock($block, $class, $method) {
-    /* TODO 
-     * 1. Optimization, if an 'for' has no statements we should just use a ';' rather than a '{ }' pair
-     * 2. Optimization, if an 'for' has no statements, than maybe it is 'dead code' and should be removed
-     * NOTE: this requires that the test expression has no side-effects (i.e. assigning within an if, function call, etc.)
-     */
-    $this->_emitter->emit('{', true);
-    $this->_emitter->indent();
-
-    if (isset($block) && count($block)) {
-      $this->_processStatementBlock($block, $class, $method);
-    }
-
-    // Garauntee that we flush any pending lines
-    $this->_emitter->emitNL();
-    $this->_emitter->unindent();
-    $this->_emitter->emit('}', true);
-  }
-
-  protected function _emitFor($for, $class, $method) {
-    // Get Index and Count
-    $index = $for['key'];
-    $length = $for['length'];
-    $over = $for['expr'];
-
-    // Create a Value Assignement Statemement ex: $for['value'] = $key
-    $value_assign = [
-      'type' => 'assign',
-      'assign-to-type' => 'variable',
-      'operator' => 'assign',
-      'variable' => $for['value'],
-      'expr' => [
-        'type' => 'array-access',
-        'left' => [
-          'type' => 'variable',
-          'value' => $over['value'],
-          'file' => $for['file'],
-          'line' => $for['line'],
-          'char' => $for['char']
-        ],
-        'right' => [
-          'type' => 'variable',
-          'value' => $index,
-          'file' => $for['file'],
-          'line' => $for['line'],
-          'char' => $for['char']
-        ],
-        'file' => $for['file'],
-        'line' => $for['line'],
-        'char' => $for['char']
-      ]
-    ];
-
-    /*
-     * HEADER
-     */
-    $this->_emitter->emit(['for', '(']);
-    // Index Initialization Statement
-    $this->_emitter->emit(["\${$index}", '=', '0', ';']);
-    // For Cut Off Statement
-    $this->_emitter->emit(["\${$index}", '<', "\${$length}", ';']);
-    // For Increment Statement
-    $this->_emitter->emit(["\${$index}", '++']);
-    $this->_emitter->emit(')');
-
-    /*
-     * BODY
-     */
-    $config_forLFStartBlock = true; // for '{' on new line?
-    $this->_emitter->emitNL($config_forLFStartBlock);
-
-    // Add Value Assignments
-    $statements = $for['statements'];
-    array_unshift($statements, $value_assign);
-
-    $this->_emitStatementBlock($statements, $class, $method);
-  }
-
-  protected function _emitForEach($for, $class, $method) {
-    // TODO Handle 'anonymous variable' i.e. key, _
-    // TODO from flow.zep : for _ in range(1, 10) (No Key, No Value)
-    $key = isset($for['key']) ? $for['key'] : null;
-    $value = $for['value'];
-
-    /*
-     * HEADER
-     */
-    $this->_emitter->emit(['foreach', '(']);
-    $this->_processExpression($for['expr'], $class, $method);
-    $this->_emitter->emit('as');
-    if (isset($key)) {
-      $this->_emitter->emit(["\${$key}", '=>', "\${$value}"]);
-    } else {
-      $this->_emitter->emit("\${$value}");
-    }
-    $this->_emitter->emit(')');
-
-    /*
-     * BODY
-     */
-    $config_forLFStartBlock = true; // for '{' on new line?
-    $this->_emitter->emitNL($config_forLFStartBlock);
-    $this->_emitStatementBlock($for['statements'], $class, $method);
+    $this->_emitter->emit_operator(']', 'array.index');
   }
 
   protected function _statementFor($for, $class, $method) {
@@ -826,337 +710,96 @@ class EmitCode implements IStage {
   }
 
   protected function _statementWhile($while, $class, $method) {
-    /*
-     * HEADER
-     */
-    $this->_emitter->emit(['while', '(']);
+    /* WHILE HEADER */
+    $this->_emitter
+      ->emit_keyword('while')
+      ->emit_operator('(', 'while');
     $this->_processExpression($while['expr'], $class, $method);
-    $this->_emitter->emit(')');
+    $this->_emitter->emit_operator(')', 'while');
 
-    // TODO: Move to the Flag to Configuration File
-    $config_forLFStartBlock = true; // method '{' on new line?
-    $this->_emitter->emitNL($config_forLFStartBlock);
-    $this->_emitter->emit('{', true);
-
-    /*
-     * BODY
-     */
-    $this->_emitter->indent();
-
-    if (isset($while['statements'])) {
-      $this->_processStatementBlock($while['statements'], $class, $method);
-    }
-
-    // Garauntee that we flush any pending lines
-    $this->_emitter->emitNL();
-    $this->_emitter->unindent();
-    /*
-     * FOOTER
-     */
-    $this->_emitter->emit('}', true);
+    /*  WHILE BODY */
+    $this->_emitStatementBlock($while['statements'], 'while', self::EMPTY_COMMA, $class, $method);
   }
 
   protected function _statementLoop($loop, $class = null, $method = null) {
-    /*
-     * HEADER
-     */
-    $this->_emitter->emit('do');
+    /* DO-WHILE HEADER */
+    $this->_emitter->emit_keyword('do');
 
-    // TODO: Move to the Flag to Configuration File
-    $config_dowhileLFStartBlock = false; // method '{' on new line?
-    if ($config_dowhileLFStartBlock) {
-      $this->_emitter->emitNL();
-    }
-    $this->_emitter->emit('{', true);
+    /* DO-WHILE BODY */
+    $this->_emitStatementBlock($loop['statements'], 'do', self::EMPTY_BLOCK, $class, $method);
 
-    /*
-     * BODY
-     */
-    $this->_emitter->indent();
-
-    if (isset($loop['statements'])) {
-      $this->_processStatementBlock($loop['statements'], $class, $method);
-    }
-
-    // Garauntee that we flush any pending lines
-    $this->_emitter->emitNL();
-    $this->_emitter->unindent();
-
-    /*
-     * FOOTER
-     */
-    $this->_emitter->emit(['}', 'while', '(', 'true', ')']);
-    $this->_emitter->emitEOS();
+    /* DO-WHILE FOOTER */
+    $this->_emitter
+      ->emit_keyword('while')
+      ->emit_operator('(', 'do')
+      ->emit_keyword('TRUE')
+      ->emit_operator(')', 'do')
+      ->emit_eos('do');
   }
 
   protected function _statementDoWhile($dowhile, $class = null, $method = null) {
-    /*
-     * HEADER
-     */
-    $this->_emitter->emit('do');
+    /* DO-WHILE HEADER */
+    $this->_emitter->emit_keyword('do');
 
-    // TODO: Move to the Flag to Configuration File
-    $config_dowhileLFStartBlock = false; // method '{' on new line?
-    if ($config_dowhileLFStartBlock) {
-      $this->_emitter->emitNL();
-    }
-    $this->_emitter->emit('{', true);
+    /* DO-WHILE BODY */
+    $this->_emitStatementBlock($dowhile['statements'], 'do', self::EMPTY_BLOCK, $class, $method);
 
-    /*
-     * BODY
-     */
-    $this->_emitter->indent();
-
-    if (isset($dowhile['statements'])) {
-      $this->_processStatementBlock($dowhile['statements'], $class, $method);
-    }
-
-    // Garauntee that we flush any pending lines
-    $this->_emitter->emitNL();
-    $this->_emitter->unindent();
-
-    /*
-     * FOOTER
-     */
-    $this->_emitter->emit(['}', 'while', '(']);
+    /* DO-WHILE FOOTER */
+    $this->_emitter
+      ->emit_keyword('while')
+      ->emit_operator('(', 'do');
     $this->_processExpression($dowhile['expr'], $class, $method);
-    $this->_emitter->emit(')');
-    $this->_emitter->emitEOS();
-  }
-
-  protected function _emitStatementLet($ast) {
-    $assignments = $ast['assignments'];
-    foreach ($assignments as $assignment) {
-      // Assignment (LHS)
-      switch ($assignment['assign-type']) {
-        case 'variable-append':
-          $to = "\${$assignment['variable']}[]";
-          break;
-        case 'array-index':
-          $to = "\${$assignment['variable']}";
-          foreach ($assignment['index-expr'] as $element) {
-            switch ($element['type']) {
-              case 'string':
-                $to.="[\"{$element['value']}\"]";
-                break;
-              case 'variable':
-                $to.="[\${$element['value']}]";
-                break;
-              default:
-                $to.="[{$element['value']}]";
-            }
-          }
-          break;
-        case 'object-property':
-          $to = "\${$assignment['variable']}->{$assignment['property']}";
-          break;
-        case 'object-property-append':
-          $to = "\${$assignment['variable']}->{$assignment['property']}[]";
-          break;
-        case 'object-property-array-index':
-          $to = "\${$assignment['variable']}->{$assignment['property']}";
-          $indices = $assignment['index-expr'];
-          foreach ($indices as $index) {
-            $to.='[';
-            switch ($index['type']) {
-              case 'string':
-                $to.="\"{$index['value']}\"";
-                break;
-              case 'variable':
-                $to.="\${$index['value']}";
-                break;
-              default:
-                $to.="{$index['value']}";
-            }
-            $to.=']';
-          }
-          break;
-        case 'object-property-array-index-append':
-          $to = "\${$assignment['variable']}->{$assignment['property']}";
-          $indices = $assignment['index-expr'];
-          foreach ($indices as $index) {
-            $to.='[';
-            switch ($index['type']) {
-              case 'string':
-                $to.="\"{$index['value']}\"";
-                break;
-              case 'variable':
-                $to.="\${$index['value']}";
-                break;
-              default:
-                $to.="{$index['value']}";
-            }
-            $to.=']';
-          }
-          $to.='[]';
-          break;
-        case 'object-property-incr':
-          $to = "\${$assignment['variable']}->{$assignment['property']}++";
-          break;
-        case 'object-property-decr':
-          $to = "\${$assignment['variable']}->{$assignment['property']}--";
-          break;
-        case 'static-property':
-          $to = "{$assignment['variable']}::\${$assignment['property']}";
-          break;
-        case 'static-property-append':
-          $to = "{$assignment['variable']}::\${$assignment['property']}[]";
-          break;
-        case 'static-property-array-index':
-          $to = "{$assignment['variable']}::\${$assignment['property']}";
-          $indices = $assignment['index-expr'];
-          foreach ($indices as $index) {
-            $to.='[';
-            switch ($index['type']) {
-              case 'string':
-                $to.="\"{$index['value']}\"";
-                break;
-              case 'variable':
-                $to.="\${$index['value']}";
-                break;
-              default:
-                $to.="{$index['value']}";
-            }
-            $to.=']';
-          }
-          break;
-        case 'static-property-array-index-append':
-          $to = "{$assignment['variable']}::\${$assignment['property']}";
-          $indices = $assignment['index-expr'];
-          foreach ($indices as $index) {
-            $to.='[';
-            switch ($index['type']) {
-              case 'string':
-                $to.="\"{$index['value']}\"";
-                break;
-              case 'variable':
-                $to.="\${$index['value']}";
-                break;
-              default:
-                $to.="{$index['value']}";
-            }
-            $to.=']';
-          }
-          $to.='[]';
-          break;
-        case 'incr':
-          $to = "\${$assignment['variable']}++";
-          break;
-        case 'decr':
-          $to = "\${$assignment['variable']}--";
-          break;
-        default:
-          $to = "\${$assignment['variable']}";
-          break;
-      }
-      echo "{$to}";
-      // Operator
-      if (isset($assignment['operator'])) {
-        echo ' ';
-        switch ($assignment['operator']) {
-          case 'assign':
-            echo '=';
-            break;
-          case 'mul-assign':
-            echo '*=';
-            break;
-          case 'add-assign':
-            echo '+=';
-            break;
-          case 'sub-assign':
-            echo '-=';
-            break;
-          case 'concat-assign':
-            echo '.=';
-            break;
-          default:
-            echo "Operator Type [{$assignment['operator']}] is unknown";
-        }
-      }
-      // Assignment (RHS)
-      if (isset($assignment['expr'])) {
-        $rhs = $assignment['expr'];
-        $this->_emitExpression($rhs);
-      }
-      echo ";\n";
-    }
+    $this->_emitter
+      ->emit_operator(')', 'do')
+      ->emit_eos('do');
   }
 
   protected function _statementIf($if, $class = null, $method = null) {
+    $has_else = isset($if['else_statements']) && count($if['else_statements']);
+    $has_else_if = isset($if['elseif_statements']) && count($if['elseif_statements']);
+
     /* IF (EXPR) */
-    $this->_statementIfExpression($if, $class, $method);
+    $this->_emitIfStatement($if, ($has_else || $has_else_if) ? 'else.if' : 'if', $class, $method);
 
     /* ELSE IF { statements } */
     if (isset($if['elseif_statements'])) {
-      foreach ($if['elseif_statements'] as $else_if) {
-        $this->_emitter->emit('else');
-        $this->_statementIfExpression($else_if, $class, $method);
+      $count = count($if['elseif_statements']);
+      $context = 'else.if';
+      for ($i = 0; $i < $count; $i++) {
+        if ($i === ($count - 1)) {
+          $context = $has_else ? 'else' : 'if';
+        }
+        $else_if = $if['elseif_statements'][$i];
+        $this->_emitter->emit_keyword('else');
+        $this->_emitIfStatement($else_if, $context, $class, $method);
       }
     }
 
     /* ELSE { statements } */
     if (isset($if['else_statements'])) {
-      $this->_emitter->emit(['else', '{'], true);
-      $this->_emitter->indent();
-
-      /* ELSE { statements } */
-      $this->_processStatementBlock($if['else_statements'], $class, $method);
-
-      // Garauntee that we flush any pending lines
-      $this->_emitter->emitNL();
-      $this->_emitter->unindent();
-      $this->_emitter->emit('}', true);
+      $this->_emitter->emit_keyword('else');
+      $this->_emitStatementBlock($if['else_statements'], "else", self::EMPTY_COMMA, $class, $method);
     }
-  }
-
-  protected function _statementIfExpression($if_expr, $class = null, $method = null) {
-    $this->_emitter->emit(['if', '(']);
-    // TODO: Move to the Flag to Configuration File
-    $config_ifLFExpressions = true; // Function Parameters on new line?
-    $this->_emitter->emitNL($config_ifLFExpressions);
-    $this->_emitter->indent($config_ifLFExpressions);
-
-    $this->_processExpression($if_expr['expr'], $class, $method);
-
-    $this->_emitter->emitNL($config_ifLFExpressions);
-    $this->_emitter->unindent($config_ifLFExpressions);
-    $this->_emitter->emit(')');
-
-    $config_ifLFStartBlock = true; // '{' on new line?
-    $this->_emitter->emitNL($config_ifLFStartBlock);
-    $this->_emitter->emit('{', true);
-
-    /* IF { statements } */
-    $this->_emitter->indent();
-
-    if (isset($if_expr['statements'])) {
-      $this->_processStatementBlock($if_expr['statements'], $class, $method);
-    }
-
-    // Garauntee that we flush any pending lines
-    $this->_emitter->emitNL();
-    $this->_emitter->unindent();
-    $this->_emitter->emit('}', true);
   }
 
   protected function _statementSwitch($switch, $class = null, $method = null) {
-    // HEADER
-    $this->_emitter->emit(['switch', '(']);
-    // TODO: Move to the Flag to Configuration File
-    $config_switchLFExpressions = true; // Function Parameters on new line?
-    $this->_emitter->emitNL($config_switchLFExpressions);
-    $this->_emitter->indent($config_switchLFExpressions);
-
+    /* -------------
+     * SWITCH HEADER
+     * ------------- */
+    $this->_emitter
+      ->emit_keyword('switch')
+      ->emit_operator('(', 'switch');
     $this->_processExpression($switch['expr'], $class, $method);
+    $this->_emitter->emit_operator(')', 'switch');
 
-    $this->_emitter->emitNL($config_switchLFExpressions);
-    $this->_emitter->unindent($config_switchLFExpressions);
-    $this->_emitter->emit(')');
-
-    $config_switchLFStartBlock = true; // '{' on new line?
-    $this->_emitter->emitNL($config_switchLFStartBlock);
-    $this->_emitter->emit('{', true);
-    $this->_emitter->indent();
+    /* -----------
+     * SWITCH BODY
+     * ----------- */
+    // Open SWITCH Block
+    $this->_emitter
+      ->emit_operator('{', 'block.switch')
+      ->push_indent()
+      ->indent();
 
     // BODY : SWITCH CLAUSES
     /* TODO 
@@ -1168,130 +811,96 @@ class EmitCode implements IStage {
       foreach ($switch['clauses'] as $clause) {
         switch ($clause['type']) {
           case 'case':
-            $this->_emitter->emit('case');
+            $this->_emitter->emit_keyword('case');
             $this->_processExpression($clause['expr'], $class, $method);
-            $this->_emitter->emit(':', true);
+            $this->_emitter->emit_operator(':', 'case');
             break;
           case 'default':
-            $this->_emitter->emit(['default', ':'], true);
+            $this->_emitter
+              ->emit_keyword('default')
+              ->emit_operator(':', 'case');
             break;
           default:
             throw new \Exception("Unexpected SWITCH Clause Type [{$clause['type']}] in line [{$assign['line']}]");
         }
 
-        // Do we have statements for the clause?
-        if (isset($clause['statements']) && count($clause['statements'])) { // YES : Process
-          $this->_emitter->indent();
-          $this->_processStatementBlock($clause['statements'], $class, $method);
-          $this->_emitter->unindent();
-        }
+        // Output Statement Blocks
+        $this->_emitStatementBlock($clause['statements'], 'case', self::EMPTY_NOTHING, $class, $method);
       }
     }
 
-    // FOOTER
-    $this->_emitter->emitNL();
-    $this->_emitter->unindent();
-    $this->_emitter->emit('}', true);
+    // Close SWITCH Block
+    $this->_emitter
+      ->pop_indent()
+      ->emit_operator('}', 'block.switch');
   }
 
   protected function _statementTryCatch($trycatch, $class = null, $method = null) {
-    // BODY : CATCH CLAUSES
-    /* TODO 
-     * 1. Optimization, if an 'try' has no clauses we should just use a ';' rather than a '{ }' pair
-     * 2. Optimization, if an 'try' has no clauses, than maybe it is 'dead code' and should be removed
-     * NOTE: this requires that the test expression has no side-effects (i.e. assigning within an if, function call, etc.)
-     */
-    /* TRY HEADER */
-    $this->_emitter->emit('try');
+    // Code Emitter
+    $emitter = $this->_emitter;
 
-    // TODO: Move to the Flag to Configuration File
-    $config_tryLFStartBlock = false; // method '{' on new line?
-    if ($config_tryLFStartBlock) {
-      $this->_emitter->emitNL();
-    }
-    $this->_emitter->emit('{', true);
+    /* TRY HEADER */
+    $emitter->emit_keyword('try');
 
     /* TRY BODY */
-    $this->_emitter->indent();
-    $this->_processStatementBlock($trycatch['statements'], $class, $method);
-
-    // Garauntee that we flush any pending lines
-    $this->_emitter->emitNL();
-    $this->_emitter->unindent();
-
-    /*
-     * TRY FOOTER
-     */
-    $this->_emitter->emit('}');
+    $this->_emitStatementBlock($trycatch['statements'], 'try', self::EMPTY_BLOCK, $class, $method);
 
     // BODY : CATCH CLAUSES
-    /* TODO 
-     * 1. Optimization, if an 'catch' has no clauses we should just use a ';' rather than a '{ }' pair
-     * 2. Optimization, if an 'catch' has no clauses, than maybe it is 'dead code' and should be removed
-     * NOTE: this requires that the test expression has no side-effects (i.e. assigning within an if, function call, etc.)
-     */
     foreach ($trycatch['catches'] as $catch) {
       /* CATCH HEADER */
-      $this->_emitter->emit(['catch', '(']);
+      $emitter
+        ->emit_keyword('catch')
+        ->emit_operator('(', 'catch');
       $this->_property = true;
       $this->_processExpression($catch['class'], $class, $method);
+      $emitter->emit_space();
       $this->_processExpression($catch['variable'], $class, $method);
-      $this->_emitter->emit(')', true);
-
-      // TODO: Move to the Flag to Configuration File
-      $config_tryLFStartBlock = false; // method '{' on new line?
-      if ($config_tryLFStartBlock) {
-        $this->_emitter->emitNL();
-      }
-      $this->_emitter->emit('{', true);
+      $emitter->emit_operator(')', 'catch');
 
       /* CATCH BODY */
-      $this->_emitter->indent();
-      $this->_processStatementBlock($catch['statements'], $class, $method);
-
-      // Garauntee that we flush any pending lines
-      $this->_emitter->emitNL();
-      $this->_emitter->unindent();
-
-      /* TRY FOOTER */
-      $this->_emitter->emit('}', true);
+      $this->_emitStatementBlock($catch['statements'], 'catch', self::EMPTY_BLOCK, $class, $method);
     }
   }
 
   protected function _statementContinue($continue, $class = null, $method = null) {
-    $this->_emitter->emit('continue');
-    $this->_emitter->emitEOS();
+    $this->_emitter
+      ->emit_keyword('continue')
+      ->emit_eos('continue');
   }
 
   protected function _statementBreak($break, $class = null, $method = null) {
-    $this->_emitter->emit('break');
-    $this->_emitter->emitEOS();
+    $this->_emitter
+      ->emit_keyword('break')
+      ->emit_eos('break');
   }
 
   protected function _statementReturn($return, $class = null, $method = null) {
-    $this->_emitter->emit('return');
+    $this->_emitter->emit_keyword('return');
     // Are we dealing with an empty return (i.e. return;)?
     if (isset($return['expr'])) { // NO
       $this->_processExpression($return['expr'], $class, $method);
     }
-    $this->_emitter->emitEOS();
+    $this->_emitter->emit_eos('return');
   }
 
   protected function _statementThrow($throw, $class = null, $method = null) {
-    $this->_emitter->emit('throw');
+    $this->_emitter->emit_keyword('throw');
     $this->_processExpression($throw['expr'], $class, $method);
-    $this->_emitter->emitEOS();
+    $this->_emitter->emit_eos('throw');
   }
 
   protected function _statementUnset($unset, $class = null, $method = null) {
-    $this->_emitter->emit(['unset', '(']);
+    $this->_emitter
+      ->emit_keyword('unset')
+      ->emit_operator('(', 'unset');
     $this->_processExpression($unset['expr'], $class, $method);
-    $this->_emitter->emit(')');
-    $this->_emitter->emitEOS();
+    $this->_emitter
+      ->emit_operator(')', 'unset')
+      ->emit_eos('unset');
   }
 
   protected function _statementEcho($echo, $class = null, $method = null) {
-    $this->_emitter->emit('echo');
+    $this->_emitter->emit_keyword('echo');
     $first = true;
     foreach ($echo['expressions'] as $expression) {
       if (!$first) {
@@ -1300,7 +909,7 @@ class EmitCode implements IStage {
       $this->_processExpression($expression, $class, $method);
       $first = false;
     }
-    $this->_emitter->emitEOS();
+    $this->_emitter->emit_eos('echo');
   }
 
   /**
@@ -1309,28 +918,25 @@ class EmitCode implements IStage {
    * @param type $ast
    */
   protected function _expressionScall($call, $class = null, $method = null) {
+    // Method Name
     // Take Into Account if Class Name is By Name or By Reference
     $classname = isset($call['dynamic-class']) && $call['dynamic-class'] ? "\$${call['class']}" : $call['class'];
     // Take Into Account if Method Name is By Name or By Reference
     $methodname = isset($call['dynamic']) && $call['dynamic'] ? "\$${call['name']}" : $call['name'];
-    $this->_emitter->emit([$classname, '::', $methodname, '(']);
-    if (count($call['parameters'])) {
-      $first = true;
-      foreach ($call['parameters'] as $parameter) {
-        if (!$first) {
-          $this->_emitter->emit(',');
-        }
-        $this->_processExpression($parameter, $class, $method);
-        $first = false;
-      }
-    }
-    $this->_emitter->emit(')');
+    $this->_emitter
+      ->emit($classname)
+      ->emit_operator('::')
+      ->emit($methodname);
+
+    // Method Call Parameters
+    $this->_emitCallParameters($call['parameters'], null, $class, $method);
   }
 
   /**
-   * Class Method Call
    * 
-   * @param type $ast
+   * @param type $call
+   * @param type $class
+   * @param type $method
    */
   protected function _expressionMcall($call, $class = null, $method = null) {
     /* TODO: Handle Special Case:
@@ -1351,56 +957,48 @@ class EmitCode implements IStage {
      * 
      * Study Solution...
      */
+
+    // Method Name
     $this->_variable = true;
     $this->_processExpression($call['variable']);
     $this->_variable = false;
     if ($call['call-type'] === 2) {
-      $this->_emitter->emit(['->', "\${$call['name']}", '(']);
+      $this->_emitter
+        ->emit_operator('->')
+        ->emit("\${$call['name']}");
     } else {
-      $this->_emitter->emit(['->', $call['name'], '(']);
+      $this->_emitter
+        ->emit_operator('->')
+        ->emit($call['name']);
     }
-    if (count($call['parameters'])) {
-      $first = true;
-      foreach ($call['parameters'] as $parameter) {
-        if (!$first) {
-          $this->_emitter->emit(',');
-        }
-        $this->_processExpression($parameter, $class, $method);
-        $first = false;
-      }
-    }
-    $this->_emitter->emit(')');
+
+    // Method Call Parameters
+    $this->_emitCallParameters($call['parameters'], null, $class, $method);
   }
 
   /**
-   * Function Call
    * 
-   * @param type $ast
+   * @param type $call
+   * @param type $class
+   * @param type $method
    */
   protected function _expressionFcall($call, $class = null, $method = null) {
-    $this->_emitter->emit([$call['name'], '(']);
-    if (count($call['parameters'])) {
-      $first = true;
-      foreach ($call['parameters'] as $parameter) {
-        if (!$first) {
-          $this->_emitter->emit(',');
-        }
-        $this->_processExpression($parameter, $class, $method);
-        $first = false;
-      }
-    }
-    $this->_emitter->emit(')');
+    // Function Name
+    $this->_emitter->emit($call['name']);
+
+    // Function Call Parameters
+    $this->_emitCallParameters($call['parameters'], null, $class, $method);
   }
 
   protected function _expressionClone($clone, $class, $method) {
-    $this->_emitter->emit('clone');
+    $this->_emitter->emit_keyword('clone');
     $this->_processExpression($clone['left'], $class, $method);
   }
 
   protected function _expressionNew($new, $class, $method) {
     // Is the new Being Treated as a Variable
     if (isset($this->_variable)) { // YES
-      $this->_emitter->emit('(');
+      $this->_emitter->emit_operator('(', 'call.wrapper');
     }
 
     // Is the 'class' given as actual name?
@@ -1411,66 +1009,50 @@ class EmitCode implements IStage {
     }
 
     if (isset($new['parameters'])) {
-      $this->_emitter->emit('(');
-
-      // TODO: Move to the Flag to Configuration File
-      $config_callLFParameters = true; // Function Parameters on new line?
-      $this->_emitter->emitNL($config_callLFParameters);
-      $this->_emitter->indent($config_callLFParameters);
-
-      $first = true;
-      foreach ($new['parameters'] as $parameter) {
-        if (!$first) {
-          $this->_emitter->emit(',');
-          $this->_emitter->emitNL($config_callLFParameters);
-        }
-        $this->_processExpression($parameter, $class, $method);
-        $first = false;
-      }
-      $this->_emitter->emitNL($config_callLFParameters);
-      $this->_emitter->unindent($config_callLFParameters);
-      $this->_emitter->emit(')');
+      $this->_emitCallParameters($new['parameters'], null, $class, $method);
     }
 
     // Is the new being treated as a variable?
     if (isset($this->_variable)) { // YES
-      $this->_emitter->emit(')');
+      $this->_emitter->emit_operator(')', 'call.wrapper');
     }
   }
 
   protected function _expressionIsset($isset, $class, $method) {
     $left = $isset['left'];
+    $this->_emitter
+      ->emit_keyword('isset')
+      ->emit_operator('(', 'call.isset');
     switch ($left['type']) {
       case 'static-property-access':
         // TODO Verify if this is what zephir does for static access
-        $this->_emitter->emit(['isset', '(']);
         $this->_property = true;
         $this->_processExpression($left['left'], $class, $method);
-        $this->_emitter->emit('::');
+        $this->_emitter->emit_operator('::');
         $this->_processExpression($left['right'], $class, $method);
-        $this->_emitter->emit(')');
         break;
       case 'variable':
-        $this->_emitter->emit(['isset', '(']);
         $this->_processExpression($left, $class, $method);
-        $this->_emitter->emit(')');
         break;
       default:
         throw new \Exception("TODO - 2 - isset([{$type}]) in line [{$isset['line']}]");
     }
+    $this->_emitter->emit_operator(')', 'call.isset');
   }
 
   protected function _expressionTypeof($typeof, $class, $method) {
     // TODO: Transfer this to InlineNormalize (where it makes more sense to due the conversion to a function call)
-    $this->_emitter->emit(['zephir_typeof', '(']);
+    $this->_emitter
+      ->emit_keyword('zephir_typeof')
+      ->emit_operator('(', 'call.function');
     $this->_processExpression($typeof['left'], $class, $method);
-    $this->_emitter->emit(')');
+    $this->_emitter->emit_operator(')', 'call.function');
   }
 
   protected function _expressionParameter($parameter, $class, $method) {
     $this->_emitter->emit("\${$parameter['name']}");
     if (isset($parameter['default'])) {
-      $this->_emitter->emit('=');
+      $this->_emitter->emit_operator('=');
       $this->_processExpression($parameter['default'], $class);
     }
   }
@@ -1479,16 +1061,16 @@ class EmitCode implements IStage {
     $left = $expression['left'];
     $right = $expression['right'];
     $this->_processExpression($left, $class, $method);
-    $this->_emitter->emit('[');
+    $this->_emitter->emit_operator('[', 'array.index');
     $this->_processExpression($right, $class, $method);
-    $this->_emitter->emit(']');
+    $this->_emitter->emit_operator(']', 'array.index');
   }
 
   protected function _expressionPropertyAccess($expression, $class = null, $method = null) {
     $left = $expression['left'];
     $right = $expression['right'];
     $this->_processExpression($left, $class, $method);
-    $this->_emitter->emit('->');
+    $this->_emitter->emit_operator('->');
     // Flag the Next Expression as Property Expression
     $this->_property = true;
     $this->_processExpression($right, $class, $method);
@@ -1498,7 +1080,7 @@ class EmitCode implements IStage {
     $left = $expression['left'];
     $right = $expression['right'];
     $this->_processExpression($left, $class, $method);
-    $this->_emitter->emit('->');
+    $this->_emitter->emit_operator('->');
     // Flag the Next Expression as Property Expression
     $this->_processExpression($right, $class, $method);
   }
@@ -1508,7 +1090,7 @@ class EmitCode implements IStage {
     $right = $expression['right'];
     $this->_property = true;
     $this->_processExpression($left, $class, $method);
-    $this->_emitter->emit('::');
+    $this->_emitter->emit_operator('::');
     $this->_processExpression($right, $class, $method);
   }
 
@@ -1517,7 +1099,7 @@ class EmitCode implements IStage {
     $right = $expression['right'];
     $this->_property = true;
     $this->_processExpression($left, $class, $method);
-    $this->_emitter->emit('::');
+    $this->_emitter->emit_operator('::');
     $this->_property = true;
     $this->_processExpression($right, $class, $method);
   }
@@ -1528,9 +1110,9 @@ class EmitCode implements IStage {
      *               : false;
      */
     $this->_processExpression($ternary['left'], $class, $method);
-    $this->_emitter->emit('?');
+    $this->_emitter->emit_operator('?', 'ternary');
     $this->_processExpression($ternary['right'], $class, $method);
-    $this->_emitter->emit(':');
+    $this->_emitter->emit_operator(':', 'ternary');
     $this->_processExpression($ternary['extra'], $class, $method);
   }
 
@@ -1549,11 +1131,11 @@ class EmitCode implements IStage {
     switch ($type) {
       case 'array':
         // TODO : Verify if this is correct handling for zephir
-        echo '[]';
+        $this->_emitter->emit_operators(['[', ']'], 'array.empty');
         break;
       case 'string':
         // TODO: See the Actual Implementation to Verify if this is worth it
-        echo "''";
+        $this->_emitter->emit_operators(['\'', '\''], 'string.empty');
         break;
       default:
         throw new \Exception("Function [_emitNewType] - Cannot build instance of type [{$type}]");
@@ -1561,56 +1143,24 @@ class EmitCode implements IStage {
   }
 
   protected function _expressionClosure($closure, $class, $method) {
-    /*
-     * METHOD HEADER
-     */
-    $this->_emitter->emit(['function', '(']);
-    if (count($closure['parameters'])) {
-      // TODO: Move to the Flag to Configuration File
-      $config_methodLFParameters = true; // Function Parameters on new line?
-      $this->_emitter->emitNL($config_methodLFParameters);
-      $this->_emitter->indent($config_methodLFParameters);
+    /* --------------
+     * CLOSURE HEADER
+     * -------------- */
+    $this->_emitter
+      ->push_indent()
+      ->emit_keyword('function');
+    $this->_emitFunctionParameters($closure['parameters'], 'closure', $class, $method);
 
-      $first = true;
-      foreach ($closure['parameters'] as $parameter) {
-        if (!$first) {
-          $this->_emitter->emit(',');
-          $this->_emitter->emitNL($config_methodLFParameters);
-        }
-        $this->_processExpression($parameter, $class, $method);
-        $first = false;
-      }
-      $this->_emitter->emitNL($config_methodLFParameters);
-      $this->_emitter->unindent($config_methodLFParameters);
-    }
-    $this->_emitter->emit(')');
-
-    // TODO: Move to the Flag to Configuration File
-    $config_methodLFStartBlock = true; // method '{' on new line?
-    $this->_emitter->emitNL($config_methodLFStartBlock);
-    $this->_emitter->emit('{', true);
-
-    /*
-     * METHOD BODY
-     */
-    $this->_emitter->indent();
-
-    if (isset($closure['statements'])) {
-      $this->_processStatementBlock($closure['statements'], $class, $method);
-    }
-
-    // Garauntee that we flush any pending lines
-    $this->_emitter->emitNL();
-    $this->_emitter->unindent();
-
-    /*
-     * METHOD FOOTER
-     */
-    $this->_emitter->emit('}', true);
+    /* ------------
+     * CLOSURE BODY
+     * ------------ */
+    $this
+      ->_emitStatementBlock($closure['statements'], 'closure', self::EMPTY_BLOCK)
+      ->pop_indent();
   }
 
   protected function _expressionRequire($require, $class, $method) {
-    $this->_emitter->emit('require ');
+    $this->_emitter->emit_keyword('require ');
     $this->_processExpression($require['left'], $class, $method);
   }
 
@@ -1618,30 +1168,24 @@ class EmitCode implements IStage {
    * EXPRESSION OPERATORS
    */
 
-  protected function _emitOperator($left, $operator, $right, $class, $method) {
-    $this->_processExpression($left, $class, $method);
-    $this->_emitter->emit($operator);
-    $this->_processExpression($right, $class, $method);
-  }
-
   protected function _expressionList($list, $class, $method) {
-    $this->_emitter->emit('(');
+    $this->_emitter->emit_operator('(');
     $this->_processExpression($list['left'], $class, $method);
-    $this->_emitter->emit(')');
+    $this->_emitter->emit_operator(')');
   }
 
   protected function _expressionBitwiseNot($bitwise_not, $class, $method) {
-    $this->_emitter->emit('~');
+    $this->_emitter->emit_operator('~');
     $this->_processExpression($bitwise_not['left'], $class, $method);
   }
 
   protected function _expressionMinus($minus, $class, $method) {
-    $this->_emitter->emit('-');
+    $this->_emitter->emit_operator('-');
     $this->_processExpression($minus['left'], $class, $method);
   }
 
   protected function _expressionPlus($plus, $class, $method) {
-    $this->_emitter->emit('+');
+    $this->_emitter->emit_operator('+');
     $this->_processExpression($plus['left'], $class, $method);
   }
 
@@ -1694,7 +1238,7 @@ class EmitCode implements IStage {
    */
 
   protected function _expressionNot($operation, $class, $method) {
-    $this->_emitter->emit('!');
+    $this->_emitter->emit_operator('!');
     $this->_processExpression($operation['left'], $class, $method);
   }
 
@@ -1724,7 +1268,7 @@ class EmitCode implements IStage {
 
   protected function _expressionInstanceof($operation, $class, $method) {
     $this->_processExpression($operation['left'], $class, $method);
-    $this->_emitter->emit('instanceof');
+    $this->_emitter->emit_keyword('instanceof');
     $this->_property = true;
     $this->_processExpression($operation['right'], $class, $method);
   }
@@ -1758,18 +1302,18 @@ class EmitCode implements IStage {
   }
 
   protected function _expressionBool($ast, $class = null, $method = null) {
-    $this->_emitter->emit(strtoupper($ast['value']));
+    $this->_emitter->emit_keyword(strtoupper($ast['value']));
   }
 
   protected function _expressionNull($ast, $class = null, $method = null) {
-    $this->_emitter->emit('NULL');
+    $this->_emitter->emit_keyword('NULL');
   }
 
   protected function _expressionString($ast, $class = null, $method = null) {
-    $string=$ast['value'];
+    $string = $ast['value'];
     /* IMPLEMENTATION NOTE: Since Zephir does not allow embeding of variables in
      * string.
-     */    
+     */
     $string = str_replace('$', '\\$', $ast['value']);
     $this->_emitter->emit("\"{$string}\"");
   }
@@ -1780,37 +1324,266 @@ class EmitCode implements IStage {
 
   protected function _expressionArray($array, $class = null, $method = null) {
     // OPEN ARRAY
-    $this->_emitter->emit('[');
+    $this->_emitter->emit('[', 'array.value');
 
     // PROCESS ARRAY ELEMENTS
     $first = true;
+    $indent = true;
     foreach ($array['left'] as $entry) {
       if (!$first) {
-        $this->_emitter->emit(',');
+        $this->_emitter
+          ->emit_operator(',', 'array.value')
+          ->indent($indent);
+        $indent = false;
       }
       $key = isset($entry['key']) ? $entry['key'] : null;
       if (isset($key)) {
         $this->_processExpression($key, $class, $method);
-        $this->_emitter->emit('=>');
+        $this->_emitter->emit_operator('=>');
       }
       $this->_processExpression($entry['value'], $class, $method);
       $first = false;
     }
 
     // CLOSE ARRAY
-    $this->_emitter->emit(']');
+    $this->_emitter->emit_operator(']', 'array.value');
   }
 
   protected function _expressionEmptyArray($array, $class = null, $method = null) {
-    $this->_emitter->emit('[]');
+    $this->_emitter->emit_operators(['[', ']'], 'array.empty');
   }
 
   protected function _expressionConstant($constant, $class = null, $method = null) {
     $this->_emitter->emit($constant['value']);
   }
 
+  protected function _emitStatementBlock($block, $context, $empty_block, $class = null, $method = null) {
+    $emitter = $this->_emitter;
+    $case = $context === 'case';
+    $context = isset($context) && is_string($context) ? "block.{$context}" : 'block';
+    if (isset($block) && count($block)) {
+      if (!$case) {
+        $emitter->emit_operator('{', $context);
+      } else {
+        $emitter->flush();
+      }
+
+      $emitter->push_indent()
+        ->indent();
+
+      $this->_processStatementBlock($block, $class, $method);
+
+      if (!$case) {
+        $emitter
+          ->pop_indent()
+          ->emit_operator('}', $context);
+      } else {
+        $emitter
+          ->flush() // Flush any Pending Lines
+          ->pop_indent();
+      }
+    } else {
+      // Are we Dealing with a Case Block?
+      if ($context === 'case') { // YES: Just Flush the Line
+        $this->_emitter->flush();
+      }
+
+      switch ($empty_block) {
+        case self::EMPTY_NOTHING:
+          break;
+        case self::EMPTY_COMMA:
+          $this->_emitter->emit_eos('empty');
+          break;
+        case self::EMPTY_BLOCK:
+          $this->_emitter->emit_operators(['{', '}'], 'block.empty');
+          break;
+        default:
+          throw new \Exception("System Error: Invalid Parameter for Handling Empty Statement Blocks");
+      }
+    }
+
+    return $emitter;
+  }
+
+  protected function _emitIfStatement($if, $context, $class = null, $method = null) {
+    /* IF HEADER */
+    $this->_emitter
+      ->emit_keyword('if')
+      ->emit_operator('(', $context);
+    $this->_processExpression($if['expr'], $class, $method);
+    $this->_emitter->emit_operator(')', $context);
+
+    /* IF { statements } */
+    return $this->_emitStatementBlock($if['statements'], $context, self::EMPTY_COMMA, $class, $method);
+  }
+
+  protected function _emitFor($for, $class, $method) {
+    // Get Index and Count
+    $index = $for['key'];
+    $length = $for['length'];
+    $over = $for['expr'];
+
+    // Create a Value Assignement Statemement ex: $for['value'] = $key
+    $value_assign = [
+      'type' => 'assign',
+      'assign-to-type' => 'variable',
+      'operator' => 'assign',
+      'variable' => $for['value'],
+      'expr' => [
+        'type' => 'array-access',
+        'left' => [
+          'type' => 'variable',
+          'value' => $over['value'],
+          'file' => $for['file'],
+          'line' => $for['line'],
+          'char' => $for['char']
+        ],
+        'right' => [
+          'type' => 'variable',
+          'value' => $index,
+          'file' => $for['file'],
+          'line' => $for['line'],
+          'char' => $for['char']
+        ],
+        'file' => $for['file'],
+        'line' => $for['line'],
+        'char' => $for['char']
+      ]
+    ];
+
+    /* -----------
+     * FOR HEADER
+     * ----------- */
+    $this->_emitter
+      ->emit_keyword('for')
+      // Opening Parenthesis
+      ->emit_operator('(', 'for')
+      // Index Initialization Statement
+      ->emit("\${$index}")
+      ->emit_operator('=')
+      ->emit('0')
+      ->emit_operator(';')
+      // For Cut Off Statement
+      ->emit("\${$index}")
+      ->emit_operator('<')
+      ->emit("\${$length}")
+      ->emit_operator(';')
+      // For Increment Statement
+      ->emit("\${$index}")
+      ->emit_operator('++')
+      // Closing Parenthesis
+      ->emit_operator(')', 'for');
+
+    /* -----------
+     * FOR BODY
+     * ----------- */
+    // Add Value Assignments
+    $statements = $for['statements'];
+    array_unshift($statements, $value_assign);
+
+    return $this->_emitStatementBlock($statements, 'for', self::EMPTY_COMMA, $class, $method);
+  }
+
+  protected function _emitForEach($for, $class, $method) {
+    // TODO Handle 'anonymous variable' i.e. key, _
+    // TODO from flow.zep : for _ in range(1, 10) (No Key, No Value)
+    $key = isset($for['key']) ? $for['key'] : null;
+    $value = $for['value'];
+
+    /* -----------
+     * FOR HEADER
+     * ----------- */
+    $this->_emitter
+      ->emit_keyword('foreach')
+      // Opening Parenthesis
+      ->emit_operator('(', 'for');
+    // Source Expression
+    $this->_processExpression($for['expr'], $class, $method);
+    // As Expression
+    $this->_emitter->emit_keyword('as');
+    if (isset($key)) {
+      $this->_emitter
+        ->emit("\${$key}")
+        ->emit_operator('=>')
+        ->emit("\${$value}");
+    } else {
+      $this->_emitter->emit("\${$value}");
+    }
+    // Closing Parenthesis
+    $this->_emitter->emit_operator(')', 'for');
+
+    /* -----------
+     * FOR BODY
+     * ----------- */
+    return $this->_emitStatementBlock($for['statements'], 'for', self::EMPTY_COMMA, true, $class, $method);
+  }
+
+  protected function _emitFunctionParameters($parameters, $context = null, $class = null, $method = null) {
+    $context = isset($context) && is_string($context) ? "parameters.{$context}" : 'parametes.function';
+    return $this->_emitList($parameters, $context, $class, $method);
+  }
+
+  protected function _emitCallParameters($parameters, $context = null, $class = null, $method = null) {
+    $context = isset($context) && is_string($context) ? "call.{$context}" : 'call.parameters';
+    return $this->_emitList($parameters, $context, $class, $method);
+  }
+
+  protected function _emitList($entries, $context, $class = null, $method = null) {
+    // Opening Parenthesis
+    $this->_emitter
+      ->push_indent()
+      ->emit_operator('(', $context);
+
+    // Do we have entries (for the list)?
+    if (isset($entries) && count($entries)) { // YES: Emit them
+      $first = true;
+      $indent = true; // Should we indent (more)?
+      foreach ($entries as $entry) {
+        if (!$first) {
+          $this->_emitter
+            ->emit_operator(',', $context)
+            ->indent($indent);
+          $indent = false;
+        }
+        $this->_processExpression($entry, $class, $method);
+        $first = false;
+      }
+    }
+
+    // Close Parenthesis
+    return $this->_emitter
+        ->emit_operator(')', $context)
+        ->pop_indent();
+  }
+
+  protected function _emitOperator($left, $operator, $right, $class, $method) {
+    $this->_processExpression($left, $class, $method);
+    $this->_emitter->emit_operator($operator);
+    $this->_processExpression($right, $class, $method);
+    return $this->_emitter;
+  }
+
+  protected function _emitObjectPropery($object, $property, $dynamic = false, $static = false) {
+    /*
+     * normal: ${object reference} -> {property name}
+     * static: (self|parent) :: ${property name}
+     * dynamic: ${object reference} -> ${variable containing name of property}
+     */
+    $operator = $static ? '::' : '->';
+    $object = $static ? $object : "\${$object}";
+    $property = $static || $dynamic ? "\${$property}" : $property;
+
+    return $this->_emitter
+        ->emit($object)
+        ->emit_operator($operator)
+        ->emit($property);
+  }
+
   protected function _emitCast($expression) {
-    $this->_emitter->emit(['(', $expression['data-type'], ')']);
+    return $this->_emitter
+        ->emit_operator('(', 'cast')
+        ->emit($expression['data-type'])
+        ->emit_operator(')', 'cast');
   }
 
   protected function _handlerName($prefix, $name) {

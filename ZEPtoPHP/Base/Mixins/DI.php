@@ -33,6 +33,7 @@ trait DI {
    */
   public function setDI(IDI $di) {
     $this->_di = $di;
+    return $this;
   }
 
   /**

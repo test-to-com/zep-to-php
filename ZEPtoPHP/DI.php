@@ -35,7 +35,7 @@ class DI implements IDI {
   protected static $_default;
 
   /**
-   * Phalcon\Di constructor
+   * DI constructor
    */
   public function __construct() {
     $di = self::$_default;

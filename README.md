@@ -12,6 +12,8 @@ Build Instructions
 
 **DISCLAIMER:** I use Ubuntu 14.04 as my development OS. I have not tried building this on any other Linux Distribution or Windows.
 
+**NOTE:** use git clone **--recursive**, to clone the *zep-to-php* repository, as this will also bring in clones of the the other repositories (dependencies), that contain files, I use to build zeptophp.
+
 ### Linux/Unix/Mac
 
 #### Requirements
